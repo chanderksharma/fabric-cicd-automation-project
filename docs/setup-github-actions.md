@@ -93,6 +93,12 @@ The workflow creates `platform`, `dev`, `test` and `prod` environments. `platfor
 
 The workflow is idempotent. Re-running it adopts existing state, groups, applications, repositories, branches, environments and variables.
 
+The permanent deployment application is configured with Microsoft Graph
+`Directory.Read.All` application permission so Terraform can resolve the Entra
+groups and users referenced by platform and workspace configuration. A tenant
+administrator must grant admin consent for this permission before the first
+Terraform run.
+
 ## What bootstrap creates
 
 | Layer | Result |

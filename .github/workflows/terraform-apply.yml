@@ -95,23 +95,6 @@ jobs:
             exit 1
           fi
 
-      - name: Detect existing workspaces
-        shell: bash
-        run: |
-          create_pipeline=true
-          for environment in dev test prod; do
-            terraform -chdir=infra/workspace init -reconfigure -no-color \
-              -backend-config="envs/${environment}.backend.hcl" \
-              -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
-              -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
-              -backend-config="container_name=${STATE_CONTAINER}"
-            if ! terraform -chdir=infra/workspace output -raw workspace_id >/dev/null 2>&1; then
-              create_pipeline=false
-              break
-            fi
-          done
-          echo "CREATE_DEPLOYMENT_PIPELINE=${create_pipeline}" >> "$GITHUB_ENV"
-
       - name: Terraform init
         working-directory: infra/platform
         run: |
@@ -126,7 +109,7 @@ jobs:
         # Workspaces do not exist during the first platform pass.
         run: |
           terraform plan -no-color -out=tfplan.binary \
-            -var="create_deployment_pipeline=${CREATE_DEPLOYMENT_PIPELINE}"
+            -var=create_deployment_pipeline=false
 
       - name: Terraform apply
         working-directory: infra/platform
@@ -426,4 +409,3 @@ jobs:
           terraform plan -no-color -out=tfplan.binary \
             -var=create_deployment_pipeline=true
           terraform apply -no-color -auto-approve tfplan.binary
-

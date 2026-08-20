@@ -286,6 +286,25 @@ else {
         $SpObjectId = az ad sp create --id $AppId --query id -o tsv
     }
 
+    $graphAppId = '00000003-0000-0000-c000-000000000000'
+    $directoryReadAllRoleId = '7ab1d382-f21e-4acd-a863-ba3e13f7da61'
+    $permissionJson = Invoke-Az @('ad', 'app', 'permission', 'list', '--id', $AppId, '-o', 'json')
+    $permissions = ($permissionJson -join [Environment]::NewLine) | ConvertFrom-Json
+    $hasDirectoryRead = $permissions |
+        Where-Object { $_.resourceAppId -eq $graphAppId } |
+        ForEach-Object { $_.resourceAccess } |
+        Where-Object { $_.id -eq $directoryReadAllRoleId -and $_.type -eq 'Role' }
+    if (-not $hasDirectoryRead) {
+        Invoke-Az @(
+            'ad', 'app', 'permission', 'add',
+            '--id', $AppId,
+            '--api', $graphAppId,
+            '--api-permissions', "$directoryReadAllRoleId=Role",
+            '-o', 'none'
+        ) | Out-Null
+        Write-Host '    added Microsoft Graph Directory.Read.All application permission'
+    }
+
     Write-Host "    appId (client id)     : $AppId"
     Write-Host "    service principal oid : $SpObjectId"
 

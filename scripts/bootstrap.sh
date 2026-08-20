@@ -437,6 +437,20 @@ if [[ -z "$SP_OID" ]]; then
   SP_OID="$(az ad sp create --id "$APP_ID" --query id -o tsv)"
 fi
 
+GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
+DIRECTORY_READ_ALL_ROLE_ID="7ab1d382-f21e-4acd-a863-ba3e13f7da61"
+if [[ "$(az ad app permission list \
+  --id "$APP_ID" \
+  --query "[?resourceAppId=='${GRAPH_APP_ID}'].resourceAccess[] | [?id=='${DIRECTORY_READ_ALL_ROLE_ID}' && type=='Role'] | length(@)" \
+  -o tsv)" != "1" ]]; then
+  az ad app permission add \
+    --id "$APP_ID" \
+    --api "$GRAPH_APP_ID" \
+    --api-permissions "${DIRECTORY_READ_ALL_ROLE_ID}=Role" \
+    -o none
+  echo "    added Microsoft Graph Directory.Read.All application permission"
+fi
+
 echo "    appId (client id)      : $APP_ID"
 echo "    service principal oid  : $SP_OID"
 
