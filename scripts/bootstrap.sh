@@ -509,12 +509,35 @@ add_federated_credential "gh-branch-main"  "repo:${REPOSITORY_SUBJECT}:ref:refs/
 # 4. Azure RBAC
 # -----------------------------------------------------------------------------
 assign_role() {
-  local role="$1" scope="$2"
-  az role assignment create \
-    --assignee-object-id "$SP_OID" \
-    --assignee-principal-type ServicePrincipal \
-    --role "$role" \
-    --scope "$scope" -o none 2>/dev/null || echo "    ($role already assigned at $scope)"
+  local role="$1" scope="$2" existing output attempt delay
+  existing="$(az role assignment list \
+    --scope "$scope" \
+    --query "[?principalId=='${SP_OID}' && roleDefinitionName=='${role}'].id | [0]" \
+    -o tsv)"
+  if [[ -n "$existing" ]]; then
+    echo "    $role already assigned at $scope"
+    return 0
+  fi
+
+  for attempt in $(seq 1 6); do
+    if output="$(az role assignment create \
+      --assignee-object-id "$SP_OID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$role" \
+      --scope "$scope" -o none 2>&1)"; then
+      echo "    assigned $role at $scope"
+      return 0
+    fi
+
+    if [[ "$attempt" -eq 6 ]] || ! grep -Eqi 'principal.*not found|does not exist|conflict|concurrent|temporar|try again' <<<"$output"; then
+      echo "az role assignment create failed: $output" >&2
+      return 1
+    fi
+
+    delay=$((10 * attempt))
+    echo "    waiting for service principal propagation; retrying $role in ${delay}s"
+    sleep "$delay"
+  done
 }
 
 echo "==> Assigning Azure RBAC to the service principal"

@@ -409,8 +409,37 @@ else {
 # -----------------------------------------------------------------------------
 function Add-RoleAssignment {
     param([string] $Role, [string] $Scope)
-    if ((Invoke-AzQuiet @('role', 'assignment', 'create', '--assignee-object-id', $SpObjectId, '--assignee-principal-type', 'ServicePrincipal', '--role', $Role, '--scope', $Scope, '-o', 'none')) -ne 0) {
-        Write-Host "    ($Role already assigned at $Scope)"
+
+    $query = "[?principalId=='$SpObjectId' && roleDefinitionName=='$Role'].id | [0]"
+    $existing = Invoke-Az @('role', 'assignment', 'list', '--scope', $Scope, '--query', $query, '-o', 'tsv')
+    if ($existing) {
+        Write-Host "    $Role already assigned at $Scope"
+        return
+    }
+
+    $arguments = @(
+        'role', 'assignment', 'create',
+        '--assignee-object-id', $SpObjectId,
+        '--assignee-principal-type', 'ServicePrincipal',
+        '--role', $Role,
+        '--scope', $Scope,
+        '-o', 'none'
+    )
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        $output = & az @arguments 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    assigned $Role at $Scope"
+            return
+        }
+
+        $message = $output -join [Environment]::NewLine
+        if ($attempt -eq 6 -or $message -notmatch '(?i)principal.*not found|does not exist|conflict|concurrent|temporar|try again') {
+            throw "az $($arguments -join ' ') failed: $message"
+        }
+
+        $delaySeconds = 10 * $attempt
+        Write-Host "    waiting for service principal propagation; retrying $Role in ${delaySeconds}s"
+        Start-Sleep -Seconds $delaySeconds
     }
 }
 
