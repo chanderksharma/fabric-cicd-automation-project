@@ -20,7 +20,9 @@
 
 .EXAMPLE
     # GitHub Actions lane.
-    ./scripts/bootstrap.ps1 -Lane gh -GitHubOrg chandsharma_microsoft -GitHubRepo fabric-cicd-automation-project
+    ./scripts/bootstrap.ps1 -Lane gh `
+        -GitHubOrg chandsharma_microsoft -GitHubOrgId 293792156 `
+        -GitHubRepo fabric-cicd-automation-project -GitHubRepoId 1340759336
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +32,9 @@ param(
     # in one tenant at the same time.
     [ValidateSet('gh', 'ml')] [string] $Lane = 'ml',
     [string] $GitHubOrg = 'chandsharma_microsoft',
+    [string] $GitHubOrgId = '',
     [string] $GitHubRepo = 'fabric-cicd-automation-project',
+    [string] $GitHubRepoId = '',
     [string] $SubscriptionId,
     [string] $Location = 'centralus',
     # State storage and the perimeter are shared by both lanes: they hold no
@@ -300,24 +304,80 @@ else {
 function Add-FederatedCredential {
     param([string] $Name, [string] $Subject)
 
-    if ((Invoke-AzQuiet @('ad', 'app', 'federated-credential', 'show', '--id', $AppId, '--federated-credential-id', $Name, '-o', 'none')) -eq 0) {
-        Write-Host "    federated credential '$Name' already exists"
+    $issuer = 'https://token.actions.githubusercontent.com'
+    $audience = 'api://AzureADTokenExchange'
+
+    function Get-ExistingCredential {
+        $output = & az ad app federated-credential show `
+            --id $AppId `
+            --federated-credential-id $Name `
+            -o json 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return (($output -join [Environment]::NewLine) | ConvertFrom-Json)
+    }
+
+    function Test-ExpectedCredential {
+        param($Credential)
+        return $null -ne $Credential `
+            -and $Credential.issuer -eq $issuer `
+            -and $Credential.subject -eq $Subject `
+            -and @($Credential.audiences).Count -eq 1 `
+            -and $Credential.audiences[0] -eq $audience
+    }
+
+    $existing = Get-ExistingCredential
+    if (Test-ExpectedCredential -Credential $existing) {
+        Write-Host "    federated credential '$Name' already matches"
         return
+    }
+    if ($existing) {
+        Write-Host "    replacing drifted federated credential '$Name'"
+        Invoke-Az @(
+            'ad', 'app', 'federated-credential', 'delete',
+            '--id', $AppId,
+            '--federated-credential-id', $Name
+        ) | Out-Null
     }
 
     $parameters = @{
         name        = $Name
-        issuer      = 'https://token.actions.githubusercontent.com'
+        issuer      = $issuer
         subject     = $Subject
         description = "GitHub Actions OIDC for $Subject"
-        audiences   = @('api://AzureADTokenExchange')
+        audiences   = @($audience)
     } | ConvertTo-Json -Compress
 
     $tempFile = New-TemporaryFile
     try {
         Set-Content -Path $tempFile -Value $parameters -Encoding utf8
-        Invoke-Az @('ad', 'app', 'federated-credential', 'create', '--id', $AppId, '--parameters', "@$tempFile", '-o', 'none') | Out-Null
-        Write-Host "    added federated credential '$Name' -> $Subject"
+        $arguments = @(
+            'ad', 'app', 'federated-credential', 'create',
+            '--id', $AppId,
+            '--parameters', "@$tempFile",
+            '-o', 'none'
+        )
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            $output = & az @arguments 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    added federated credential '$Name' -> $Subject"
+                return
+            }
+
+            $existing = Get-ExistingCredential
+            if (Test-ExpectedCredential -Credential $existing) {
+                Write-Host "    federated credential '$Name' exists after a delayed response"
+                return
+            }
+
+            $message = $output -join [Environment]::NewLine
+            if ($attempt -eq 6 -or $message -notmatch '(?i)duplicate values|conflict|temporar') {
+                throw "az $($arguments -join ' ') failed: $message"
+            }
+
+            $delaySeconds = 5 * $attempt
+            Write-Host "    '$Name' is waiting for Entra propagation; retrying in ${delaySeconds}s"
+            Start-Sleep -Seconds $delaySeconds
+        }
     }
     finally {
         Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
@@ -328,13 +388,18 @@ if (-not $WantServicePrincipal) {
     Write-Host '==> Skipping federated credentials (no service principal in this lane)'
 }
 else {
+    if (-not $GitHubOrgId -or -not $GitHubRepoId) {
+        throw 'GitHubOrgId and GitHubRepoId are required for immutable GitHub OIDC subjects.'
+    }
+
+    $repositorySubject = "${GitHubOrg}@${GitHubOrgId}/${GitHubRepo}@${GitHubRepoId}"
     Write-Host '==> Adding federated credentials'
-    Add-FederatedCredential -Name 'gh-env-platform' -Subject "repo:$GitHubOrg/$GitHubRepo`:environment:platform"
-    Add-FederatedCredential -Name 'gh-env-dev'      -Subject "repo:$GitHubOrg/$GitHubRepo`:environment:dev"
-    Add-FederatedCredential -Name 'gh-env-test'     -Subject "repo:$GitHubOrg/$GitHubRepo`:environment:test"
-    Add-FederatedCredential -Name 'gh-env-prod'     -Subject "repo:$GitHubOrg/$GitHubRepo`:environment:prod"
-    Add-FederatedCredential -Name 'gh-pull-request' -Subject "repo:$GitHubOrg/$GitHubRepo`:pull_request"
-    Add-FederatedCredential -Name 'gh-branch-main'  -Subject "repo:$GitHubOrg/$GitHubRepo`:ref:refs/heads/$DefaultBranch"
+    Add-FederatedCredential -Name 'gh-env-platform' -Subject "repo:$repositorySubject`:environment:platform"
+    Add-FederatedCredential -Name 'gh-env-dev'      -Subject "repo:$repositorySubject`:environment:dev"
+    Add-FederatedCredential -Name 'gh-env-test'     -Subject "repo:$repositorySubject`:environment:test"
+    Add-FederatedCredential -Name 'gh-env-prod'     -Subject "repo:$repositorySubject`:environment:prod"
+    Add-FederatedCredential -Name 'gh-pull-request' -Subject "repo:$repositorySubject`:pull_request"
+    Add-FederatedCredential -Name 'gh-branch-main'  -Subject "repo:$repositorySubject`:ref:refs/heads/$DefaultBranch"
 }
 
 # -----------------------------------------------------------------------------

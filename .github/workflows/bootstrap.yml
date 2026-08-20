@@ -178,7 +178,9 @@ jobs:
           ./scripts/bootstrap.ps1 `
               -Lane gh `
               -GitHubOrg $env:GITHUB_REPOSITORY_OWNER `
+              -GitHubOrgId $env:GITHUB_REPOSITORY_OWNER_ID `
               -GitHubRepo ($env:GITHUB_REPOSITORY.Split('/')[1]) `
+              -GitHubRepoId $env:GITHUB_REPOSITORY_ID `
               -SubscriptionId $env:AZURE_SUBSCRIPTION_ID `
               -Location $env:INPUT_LOCATION `
               -StateResourceGroup $env:INPUT_STATE_RESOURCE_GROUP `

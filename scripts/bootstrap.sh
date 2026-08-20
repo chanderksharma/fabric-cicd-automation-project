@@ -5,7 +5,7 @@
 # Creates everything Terraform cannot create for itself:
 #   1. Resource group + storage account + container for remote state
 #   2. The CI/CD app registration and its service principal
-#   3. Four federated credentials (no client secret is ever created)
+#   3. Six federated credentials (no client secret is ever created)
 #   4. Azure RBAC for the service principal
 #
 # Run once, by a human with Owner on the subscription and permission to create
@@ -13,7 +13,9 @@
 #
 # Usage:
 #   ./scripts/bootstrap.sh --github-org chandsharma_microsoft \
-#                          --github-repo fabric-cicd-automation-project
+#                          --github-org-id 293792156 \
+#                          --github-repo fabric-cicd-automation-project \
+#                          --github-repo-id 1340759336
 #
 set -euo pipefail
 
@@ -42,7 +44,9 @@ NSP_NO_AUTO_IP="no"
 SKIP_NSP="no"
 CREATE_GROUPS="no"
 GITHUB_ORG=""
+GITHUB_ORG_ID=""
 GITHUB_REPO=""
+GITHUB_REPO_ID=""
 DEFAULT_BRANCH="main"
 
 usage() {
@@ -73,7 +77,9 @@ Options:
   --nsp-no-auto-ip        Do not add this machine's public IP inbound
   --skip-nsp              Do not create or associate a perimeter
   --github-org ORG        GitHub organisation (required)
+  --github-org-id ID      Immutable GitHub organisation/user ID (required)
   --github-repo REPO      GitHub repository (required)
+  --github-repo-id ID     Immutable GitHub repository ID (required)
   --branch NAME           Default branch (default: main)
 EOF
 }
@@ -98,15 +104,17 @@ while [[ $# -gt 0 ]]; do
     --nsp-no-auto-ip)    NSP_NO_AUTO_IP="yes"; shift ;;
     --skip-nsp)          SKIP_NSP="yes"; shift ;;
     --github-org)        GITHUB_ORG="$2"; shift 2 ;;
+    --github-org-id)     GITHUB_ORG_ID="$2"; shift 2 ;;
     --github-repo)       GITHUB_REPO="$2"; shift 2 ;;
+    --github-repo-id)    GITHUB_REPO_ID="$2"; shift 2 ;;
     --branch)            DEFAULT_BRANCH="$2"; shift 2 ;;
     -h|--help)           usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
 
-if [[ -z "$GITHUB_ORG" || -z "$GITHUB_REPO" ]]; then
-  echo "ERROR: --github-org and --github-repo are required." >&2
+if [[ -z "$GITHUB_ORG" || -z "$GITHUB_ORG_ID" || -z "$GITHUB_REPO" || -z "$GITHUB_REPO_ID" ]]; then
+  echo "ERROR: --github-org, --github-org-id, --github-repo and --github-repo-id are required." >&2
   exit 1
 fi
 
@@ -437,12 +445,24 @@ echo "    service principal oid  : $SP_OID"
 #    No client secret is created, so there is nothing to rotate or leak.
 # -----------------------------------------------------------------------------
 add_federated_credential() {
-  local name="$1" subject="$2"
-  if az ad app federated-credential show --id "$APP_ID" --federated-credential-id "$name" >/dev/null 2>&1; then
-    echo "    federated credential '$name' already exists"
-    return
+  local name="$1" subject="$2" existing_subject output delay attempt
+  existing_subject="$(az ad app federated-credential show \
+    --id "$APP_ID" \
+    --federated-credential-id "$name" \
+    --query subject -o tsv 2>/dev/null || true)"
+  if [[ "$existing_subject" == "$subject" ]]; then
+    echo "    federated credential '$name' already matches"
+    return 0
   fi
-  az ad app federated-credential create --id "$APP_ID" --parameters "$(cat <<JSON
+  if [[ -n "$existing_subject" ]]; then
+    echo "    replacing drifted federated credential '$name'"
+    az ad app federated-credential delete \
+      --id "$APP_ID" \
+      --federated-credential-id "$name"
+  fi
+
+  for attempt in $(seq 1 6); do
+    if output="$(az ad app federated-credential create --id "$APP_ID" --parameters "$(cat <<JSON
 {
   "name": "$name",
   "issuer": "https://token.actions.githubusercontent.com",
@@ -451,17 +471,39 @@ add_federated_credential() {
   "audiences": ["api://AzureADTokenExchange"]
 }
 JSON
-)" -o none
-  echo "    added federated credential '$name' -> $subject"
+  )" -o none 2>&1)"; then
+      echo "    added federated credential '$name' -> $subject"
+      return 0
+    fi
+
+    existing_subject="$(az ad app federated-credential show \
+      --id "$APP_ID" \
+      --federated-credential-id "$name" \
+      --query subject -o tsv 2>/dev/null || true)"
+    if [[ "$existing_subject" == "$subject" ]]; then
+      echo "    federated credential '$name' exists after a delayed response"
+      return 0
+    fi
+
+    if [[ "$attempt" -eq 6 ]] || ! grep -Eqi 'duplicate values|conflict|temporar' <<<"$output"; then
+      echo "az ad app federated-credential create failed: $output" >&2
+      return 1
+    fi
+
+    delay=$((5 * attempt))
+    echo "    '$name' is waiting for Entra propagation; retrying in ${delay}s"
+    sleep "$delay"
+  done
 }
 
 echo "==> Adding federated credentials"
-add_federated_credential "gh-env-platform" "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:platform"
-add_federated_credential "gh-env-dev"      "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:dev"
-add_federated_credential "gh-env-test"     "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:test"
-add_federated_credential "gh-env-prod"     "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:prod"
-add_federated_credential "gh-pull-request" "repo:${GITHUB_ORG}/${GITHUB_REPO}:pull_request"
-add_federated_credential "gh-branch-main"  "repo:${GITHUB_ORG}/${GITHUB_REPO}:ref:refs/heads/${DEFAULT_BRANCH}"
+REPOSITORY_SUBJECT="${GITHUB_ORG}@${GITHUB_ORG_ID}/${GITHUB_REPO}@${GITHUB_REPO_ID}"
+add_federated_credential "gh-env-platform" "repo:${REPOSITORY_SUBJECT}:environment:platform"
+add_federated_credential "gh-env-dev"      "repo:${REPOSITORY_SUBJECT}:environment:dev"
+add_federated_credential "gh-env-test"     "repo:${REPOSITORY_SUBJECT}:environment:test"
+add_federated_credential "gh-env-prod"     "repo:${REPOSITORY_SUBJECT}:environment:prod"
+add_federated_credential "gh-pull-request" "repo:${REPOSITORY_SUBJECT}:pull_request"
+add_federated_credential "gh-branch-main"  "repo:${REPOSITORY_SUBJECT}:ref:refs/heads/${DEFAULT_BRANCH}"
 
 # -----------------------------------------------------------------------------
 # 4. Azure RBAC

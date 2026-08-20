@@ -63,7 +63,13 @@ subject:  repo:<owner>/<repository>:ref:refs/heads/main
 audience: api://AzureADTokenExchange
 ```
 
-Run `bootstrap.yml` from `main`, because the federated subject must match exactly. Neither Azure service principal has a client secret. Revoke the bootstrap application's repository federated credential after bootstrap if the elevated bootstrap path should not remain available.
+Use GitHub's immutable subject format when it is enabled for the repository:
+
+```text
+subject: repo:<owner>@<owner-id>/<repository>@<repository-id>:ref:refs/heads/main
+```
+
+The workflow reads `GITHUB_REPOSITORY_OWNER_ID` and `GITHUB_REPOSITORY_ID` automatically and uses the same immutable format for the permanent deployment credentials. Run `bootstrap.yml` from `main`, because the federated subject must match exactly. Neither Azure service principal has a client secret. Revoke the bootstrap application's repository federated credential after bootstrap if the elevated bootstrap path should not remain available.
 
 ### Fabric administrator authorization
 
@@ -137,6 +143,7 @@ In the Fabric portal, confirm that the `contoso-fab-gh-dev`, `contoso-fab-gh-tes
 | `No value for required variable` | A GitHub variable is missing. Re-run bootstrap to restore repository and environment variables |
 | `Repository secret FABRIC_GITHUB_PAT is required` | Create the repository secret with access to the items repository |
 | `AADSTS70021: No matching federated identity record` | The federated credential subject does not match. Check the environment name in the workflow against the credential |
+| `Request contains a property with duplicate values` while adding credentials | Entra has not propagated the previous federated credential write. The bootstrap retries this condition with bounded backoff |
 | `InsufficientScopes` calling Fabric | Tenant settings for service principals are not enabled. Re-run bootstrap with `configure_tenant_settings` selected |
 | `Fabric Capacity State` on test or prod | Capacity paused. `az fabric capacity resume`. Dev passes because `skip_capacity_state_validation = true` |
 | `WorkspaceAlreadyConnectedToGit` | A previous failed run left the connection. Disconnect via the API, then re-run |
