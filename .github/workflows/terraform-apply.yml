@@ -64,7 +64,7 @@ jobs:
       TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -171,7 +171,7 @@ jobs:
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -244,7 +244,7 @@ jobs:
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -317,7 +317,7 @@ jobs:
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -388,7 +388,7 @@ jobs:
       TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
