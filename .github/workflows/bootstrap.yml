@@ -228,10 +228,15 @@ jobs:
 
           foreach ($environment in @('platform', 'dev', 'test', 'prod')) {
               $protected = $environment -ne 'dev'
+              $reviewers = @()
+              if ($protected) {
+                  $reviewers = @(@{ type = 'User'; id = [long]$reviewerId })
+              }
+
               $body = @{
                   wait_timer = 0
                   prevent_self_review = $false
-                  reviewers = if ($protected) { @(@{ type = 'User'; id = [long]$reviewerId }) } else { @() }
+                  reviewers = $reviewers
                   deployment_branch_policy = if ($environment -eq 'prod') {
                       @{ protected_branches = $false; custom_branch_policies = $true }
                   }
@@ -239,13 +244,23 @@ jobs:
               } | ConvertTo-Json -Depth 6 -Compress
 
               $body | gh api --method PUT "repos/$repo/environments/$environment" --input - | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to configure GitHub environment '$environment'."
+              }
               Write-Host "Configured environment '$environment'."
           }
 
-          $policies = gh api "repos/$repo/environments/prod/deployment-branch-policies" | ConvertFrom-Json
+          $policiesJson = gh api "repos/$repo/environments/prod/deployment-branch-policies"
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Failed to read prod deployment branch policies.'
+          }
+          $policies = $policiesJson | ConvertFrom-Json
           if (-not ($policies.branch_policies | Where-Object { $_.name -eq 'main' })) {
               @{ name = 'main'; type = 'branch' } | ConvertTo-Json -Compress |
                   gh api --method POST "repos/$repo/environments/prod/deployment-branch-policies" --input - | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to create the prod deployment policy for 'main'."
+              }
           }
 
       - name: Set GitHub Actions variables
