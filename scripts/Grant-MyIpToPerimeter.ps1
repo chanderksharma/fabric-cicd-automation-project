@@ -188,16 +188,24 @@ if ($SkipVerify) { return }
 
 # Perimeter rules are eventually consistent and regularly take several minutes.
 Write-Host 'Waiting for the rule to take effect...'
+$consecutiveSuccesses = 0
 foreach ($attempt in 1..20) {
     & az storage blob list --container-name $Container --account-name $StorageAccount --auth-mode login -o none *>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Data plane reachable after $attempt attempt(s). Terraform will work now."
-        return
+        $consecutiveSuccesses++
+        Write-Host "Data plane probe $consecutiveSuccesses/3 succeeded."
+        if ($consecutiveSuccesses -eq 3) {
+            Write-Host "Data plane stable after $attempt attempt(s). Terraform can start."
+            return
+        }
+    }
+    else {
+        $consecutiveSuccesses = 0
     }
     Start-Sleep -Seconds 15
 }
 
-Write-Warning @"
+throw @"
 Still blocked after 5 minutes.
 
 Confirm $prefix is genuinely your egress address (a VPN or proxy can change it
