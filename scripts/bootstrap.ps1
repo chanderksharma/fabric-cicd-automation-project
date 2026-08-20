@@ -109,7 +109,9 @@ function Invoke-Az {
 function Invoke-AzQuiet {
     param([Parameter(Mandatory)][string[]] $Arguments)
     & az @Arguments *>&1 | Out-Null
-    return $LASTEXITCODE
+    $exitCode = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    return $exitCode
 }
 
 # ARM PUT with a JSON body. az rest reads the body from a file to avoid the
