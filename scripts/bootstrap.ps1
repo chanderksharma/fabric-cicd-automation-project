@@ -370,7 +370,7 @@ function Add-FederatedCredential {
             }
 
             $message = $output -join [Environment]::NewLine
-            if ($attempt -eq 6 -or $message -notmatch '(?i)already exists|duplicate values|conflict|temporar') {
+            if ($attempt -eq 6 -or $message -notmatch '(?i)already exists|duplicate values|conflict|concurrent requests|temporar|wait briefly') {
                 throw "az $($arguments -join ' ') failed: $message"
             }
 
