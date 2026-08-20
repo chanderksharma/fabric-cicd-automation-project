@@ -12,7 +12,7 @@
 # app registrations in Entra ID. Safe to re-run: every step is idempotent.
 #
 # Usage:
-#   ./scripts/bootstrap.sh --github-org chandsharma_microsoft \
+#   ./scripts/bootstrap.sh --github-org chanderksharma \
 #                          --github-org-id 293792156 \
 #                          --github-repo fabric-cicd-automation-project \
 #                          --github-repo-id 1340759336

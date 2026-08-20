@@ -30,7 +30,7 @@ on:
       environment_reviewer:
         description: GitHub login that approves platform, test and prod
         required: true
-        default: chandsharma_microsoft
+        default: chanderksharma
         type: string
       configure_tenant_settings:
         description: Run interactive Fabric administrator consent in this job
@@ -221,8 +221,10 @@ jobs:
         run: |
           $repo = $env:GITHUB_REPOSITORY
           $reviewerLogin = $env:INPUT_ENVIRONMENT_REVIEWER
-          $reviewerId = gh api "users/$reviewerLogin" --jq '.id'
-          if (-not $reviewerId) { throw "GitHub reviewer '$reviewerLogin' was not found." }
+          $reviewerId = gh api "users/$reviewerLogin" --jq '.id' 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $reviewerId) {
+              throw "GitHub reviewer '$reviewerLogin' was not found or is not visible to BOOTSTRAP_GITHUB_TOKEN."
+          }
 
           foreach ($environment in @('platform', 'dev', 'test', 'prod')) {
               $protected = $environment -ne 'dev'

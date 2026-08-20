@@ -21,7 +21,7 @@
 .EXAMPLE
     # GitHub Actions lane.
     ./scripts/bootstrap.ps1 -Lane gh `
-        -GitHubOrg chandsharma_microsoft -GitHubOrgId 293792156 `
+        -GitHubOrg chanderksharma -GitHubOrgId 293792156 `
         -GitHubRepo fabric-cicd-automation-project -GitHubRepoId 1340759336
 #>
 [CmdletBinding()]
@@ -31,7 +31,7 @@ param(
     # Lane-specific resources carry the lane in their name, so both can exist
     # in one tenant at the same time.
     [ValidateSet('gh', 'ml')] [string] $Lane = 'ml',
-    [string] $GitHubOrg = 'chandsharma_microsoft',
+    [string] $GitHubOrg = 'chanderksharma',
     [string] $GitHubOrgId = '',
     [string] $GitHubRepo = 'fabric-cicd-automation-project',
     [string] $GitHubRepoId = '',
