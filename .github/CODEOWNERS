@@ -1,0 +1,13 @@
+# The repository owner (chandsharma_microsoft) is a user account, not an
+# organisation, so team references such as @org/team-name are not valid here.
+# Move the repository into an organisation to use team-based ownership.
+
+/infra/                     @chandsharma_microsoft
+/.github/workflows/         @chandsharma_microsoft
+/scripts/                   @chandsharma_microsoft
+
+/workspace/                 @chandsharma_microsoft
+/src/                       @chandsharma_microsoft
+
+# Environment parameterisation affects prod.
+/workspace/parameter.yml    @chandsharma_microsoft

@@ -1,0 +1,49 @@
+{
+  "config": "{\"version\":\"5.55\",\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"settings\":{\"useStylableVisualContainerHeader\":true,\"exportDataMode\":1,\"useNewFilterPaneExperience\":true,\"allowChangeFilterTypes\":true,\"allowInlineExploration\":false,\"disableFilterPaneSearch\":false}}",
+  "layoutOptimization": 0,
+  "pods": [],
+  "publicCustomVisuals": [],
+  "resourcePackages": [],
+  "sections": [
+    {
+      "config": "{}",
+      "displayName": "Overview",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.0,
+      "name": "d1a0c4f27b9e4a1c8f30",
+      "ordinal": 0,
+      "width": 1280.0,
+      "visualContainers": [
+        {
+          "config": "{\"name\":\"c1totalsales000000\",\"layouts\":[{\"id\":0,\"position\":{\"x\":24,\"y\":24,\"width\":300,\"height\":160,\"z\":0,\"tabOrder\":0}}],\"singleVisual\":{\"visualType\":\"card\",\"projections\":{\"Values\":[{\"queryRef\":\"fact_sales.Total Sales\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"f\",\"Entity\":\"fact_sales\",\"Type\":0}],\"Select\":[{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"f\"}},\"Property\":\"Total Sales\"},\"Name\":\"fact_sales.Total Sales\",\"NativeReferenceName\":\"Total Sales\"}]},\"drillFilterOtherVisuals\":true,\"vcObjects\":{\"title\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"'Total Sales'\"}}},\"show\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 160.0,
+          "width": 300.0,
+          "x": 24.0,
+          "y": 24.0,
+          "z": 0.0
+        },
+        {
+          "config": "{\"name\":\"c2ordercount000000\",\"layouts\":[{\"id\":0,\"position\":{\"x\":344,\"y\":24,\"width\":300,\"height\":160,\"z\":1,\"tabOrder\":1}}],\"singleVisual\":{\"visualType\":\"card\",\"projections\":{\"Values\":[{\"queryRef\":\"fact_sales.Order Count\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"f\",\"Entity\":\"fact_sales\",\"Type\":0}],\"Select\":[{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"f\"}},\"Property\":\"Order Count\"},\"Name\":\"fact_sales.Order Count\",\"NativeReferenceName\":\"Order Count\"}]},\"drillFilterOtherVisuals\":true,\"vcObjects\":{\"title\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"'Orders'\"}}},\"show\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 160.0,
+          "width": 300.0,
+          "x": 344.0,
+          "y": 24.0,
+          "z": 1.0
+        },
+        {
+          "config": "{\"name\":\"c3salesbymonth000\",\"layouts\":[{\"id\":0,\"position\":{\"x\":24,\"y\":208,\"width\":1232,\"height\":480,\"z\":2,\"tabOrder\":2}}],\"singleVisual\":{\"visualType\":\"clusteredColumnChart\",\"projections\":{\"Category\":[{\"queryRef\":\"dim_date.MonthName\"}],\"Y\":[{\"queryRef\":\"fact_sales.Total Sales\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"d\",\"Entity\":\"dim_date\",\"Type\":0},{\"Name\":\"f\",\"Entity\":\"fact_sales\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"d\"}},\"Property\":\"MonthName\"},\"Name\":\"dim_date.MonthName\",\"NativeReferenceName\":\"MonthName\"},{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"f\"}},\"Property\":\"Total Sales\"},\"Name\":\"fact_sales.Total Sales\",\"NativeReferenceName\":\"Total Sales\"}]},\"drillFilterOtherVisuals\":true,\"vcObjects\":{\"title\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"'Sales by month'\"}}},\"show\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 480.0,
+          "width": 1232.0,
+          "x": 24.0,
+          "y": 208.0,
+          "z": 2.0
+        }
+      ]
+    }
+  ],
+  "filters": "[]"
+}

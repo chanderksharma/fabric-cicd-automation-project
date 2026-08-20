@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Lakehouse",
+    "displayName": "lh_bronze",
+    "description": "Raw landing zone. Files are written as-is; no schema enforcement."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "3f0d9c11-1a4e-4a2b-9c31-0b1d7e5a4c01"
+  }
+}

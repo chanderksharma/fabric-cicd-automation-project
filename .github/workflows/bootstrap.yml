@@ -1,0 +1,284 @@
+name: bootstrap
+
+# Establishes the permanent secretless deployment path from a pre-authorized
+# bootstrap service principal. Both Azure identities authenticate through
+# GitHub OIDC; no Azure client secret is used.
+
+on:
+  workflow_dispatch:
+    inputs:
+      storage_account_name:
+        description: Globally unique Terraform state storage account name
+        required: true
+        default: stcontosofabtfstate
+        type: string
+      state_resource_group:
+        description: Resource group for Terraform state and its perimeter
+        required: true
+        default: rg-terraform-state
+        type: string
+      location:
+        description: Azure region with available Fabric capacity quota
+        required: true
+        default: centralus
+        type: string
+      items_repository:
+        description: Repository that stores Fabric workspace items
+        required: true
+        default: fabric-workspace-items
+        type: string
+      environment_reviewer:
+        description: GitHub login that approves platform, test and prod
+        required: true
+        default: chandsharma_microsoft
+        type: string
+      configure_tenant_settings:
+        description: Run interactive Fabric administrator consent in this job
+        required: true
+        default: true
+        type: boolean
+      propagation_wait_seconds:
+        description: Wait after changing Fabric tenant settings
+        required: true
+        default: '900'
+        type: string
+      trigger_apply:
+        description: Dispatch terraform-apply after bootstrap
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: fabric-platform-bootstrap
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  TF_IN_AUTOMATION: 'true'
+  GH_TOKEN: ${{ secrets.BOOTSTRAP_GITHUB_TOKEN }}
+  FABRIC_GITHUB_PAT: ${{ secrets.FABRIC_GITHUB_PAT }}
+  AZURE_BOOTSTRAP_CLIENT_ID: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+  AZURE_BOOTSTRAP_TENANT_ID: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+  AZURE_BOOTSTRAP_SUBSCRIPTION_ID: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+  INPUT_STORAGE_ACCOUNT_NAME: ${{ inputs.storage_account_name }}
+  INPUT_STATE_RESOURCE_GROUP: ${{ inputs.state_resource_group }}
+  INPUT_LOCATION: ${{ inputs.location }}
+  INPUT_ITEMS_REPOSITORY: ${{ inputs.items_repository }}
+  INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
+  INPUT_PROPAGATION_WAIT_SECONDS: ${{ inputs.propagation_wait_seconds }}
+
+jobs:
+  bootstrap:
+    name: establish deployment trust
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check seed credentials
+        shell: bash
+        run: |
+          missing=false
+          for name in AZURE_BOOTSTRAP_CLIENT_ID AZURE_BOOTSTRAP_TENANT_ID AZURE_BOOTSTRAP_SUBSCRIPTION_ID GH_TOKEN FABRIC_GITHUB_PAT; do
+            if [ -z "${!name}" ]; then
+              echo "Required repository variable or secret ${name} is missing." >&2
+              missing=true
+            fi
+          done
+          if [ "${missing}" = true ]; then exit 1; fi
+
+      - name: Azure login with federated bootstrap identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Resolve seed and subscription identifiers
+        shell: pwsh
+        run: |
+          $account = az account show -o json | ConvertFrom-Json
+          $callerObjectId = az ad sp show --id $env:AZURE_BOOTSTRAP_CLIENT_ID --query id -o tsv
+          if (-not $callerObjectId) {
+              throw 'The Azure bootstrap credential does not resolve to a service principal.'
+          }
+          "BOOTSTRAP_CALLER_OBJECT_ID=$callerObjectId" >> $env:GITHUB_ENV
+          "AZURE_TENANT_ID=$($account.tenantId)" >> $env:GITHUB_ENV
+          "AZURE_SUBSCRIPTION_ID=$($account.id)" >> $env:GITHUB_ENV
+
+      - name: Check GitHub administration token
+        shell: bash
+        run: |
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.permissions.admin')" != "true" ]; then
+            echo "BOOTSTRAP_GITHUB_TOKEN must have repository administration access." >&2
+            exit 1
+          fi
+
+      - name: Create and initialize items repository
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $owner = $env:GITHUB_REPOSITORY_OWNER
+          $name = $env:INPUT_ITEMS_REPOSITORY
+          $repo = "$owner/$name"
+
+          gh api "repos/$repo" --silent 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            $ownerType = gh api "users/$owner" --jq '.type'
+            $endpoint = if ($ownerType -eq 'Organization') { "orgs/$owner/repos" } else { 'user/repos' }
+            @{
+              name = $name
+              private = $true
+              auto_init = $true
+              description = 'Microsoft Fabric workspace item source'
+            } | ConvertTo-Json -Compress |
+              gh api --method POST $endpoint --input - | Out-Null
+            Write-Host "Created '$repo'."
+          }
+
+          $defaultBranch = gh api "repos/$repo" --jq '.default_branch'
+          gh api "repos/$repo/git/ref/heads/$defaultBranch" --silent 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("# Fabric workspace items`n"))
+            @{ message = 'chore: initialise'; content = $content } | ConvertTo-Json -Compress |
+              gh api --method PUT "repos/$repo/contents/README.md" --input - | Out-Null
+            $defaultBranch = gh api "repos/$repo" --jq '.default_branch'
+          }
+
+          $head = gh api "repos/$repo/git/ref/heads/$defaultBranch" --jq '.object.sha'
+          foreach ($branch in @('gh-dev', 'gh-test', 'gh-prod')) {
+            gh api "repos/$repo/git/ref/heads/$branch" --silent 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              @{ ref = "refs/heads/$branch"; sha = $head } | ConvertTo-Json -Compress |
+                gh api --method POST "repos/$repo/git/refs" --input - | Out-Null
+              Write-Host "Created '$branch'."
+            }
+          }
+
+          $bootstrapToken = $env:GH_TOKEN
+          try {
+            $env:GH_TOKEN = $env:FABRIC_GITHUB_PAT
+            $canPush = gh api "repos/$repo" --jq '.permissions.push'
+            if ($canPush -ne 'true') {
+              throw 'FABRIC_GITHUB_PAT does not have write access to the items repository.'
+            }
+          }
+          finally {
+            $env:GH_TOKEN = $bootstrapToken
+          }
+
+      - name: Create state and permanent OIDC identity
+        shell: pwsh
+        run: |
+          ./scripts/bootstrap.ps1 `
+              -Lane gh `
+              -GitHubOrg $env:GITHUB_REPOSITORY_OWNER `
+              -GitHubRepo ($env:GITHUB_REPOSITORY.Split('/')[1]) `
+              -SubscriptionId $env:AZURE_SUBSCRIPTION_ID `
+              -Location $env:INPUT_LOCATION `
+              -StateResourceGroup $env:INPUT_STATE_RESOURCE_GROUP `
+              -StateStorageAccount $env:INPUT_STORAGE_ACCOUNT_NAME `
+              -CreateGroups `
+              -CallerObjectId $env:BOOTSTRAP_CALLER_OBJECT_ID `
+              -CallerPrincipalType ServicePrincipal
+
+      - name: Resolve permanent deployment identity
+        shell: pwsh
+        run: |
+          $clientId = az ad app list --display-name sp-fabric-cicd-gh --query '[0].appId' -o tsv
+          $objectId = az ad sp list --filter "appId eq '$clientId'" --query '[0].id' -o tsv
+          if (-not $clientId -or -not $objectId) {
+              throw 'The permanent deployment service principal was not created.'
+          }
+          "DEPLOYMENT_CLIENT_ID=$clientId" >> $env:GITHUB_ENV
+          "DEPLOYMENT_OBJECT_ID=$objectId" >> $env:GITHUB_ENV
+
+      - name: Enable Fabric tenant settings
+        if: inputs.configure_tenant_settings
+        shell: pwsh
+        run: ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal
+
+      - name: Wait for Fabric settings propagation
+        if: inputs.configure_tenant_settings && inputs.propagation_wait_seconds != '0'
+        shell: pwsh
+        run: |
+          $seconds = 0
+          if (-not [int]::TryParse($env:INPUT_PROPAGATION_WAIT_SECONDS, [ref]$seconds) -or $seconds -lt 0 -or $seconds -gt 1800) {
+              throw 'propagation_wait_seconds must be an integer from 0 to 1800.'
+          }
+          Write-Host "Waiting $seconds seconds for Fabric tenant settings to propagate."
+          Start-Sleep -Seconds $seconds
+
+      - name: Create GitHub environments and protections
+        shell: pwsh
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $reviewerLogin = $env:INPUT_ENVIRONMENT_REVIEWER
+          $reviewerId = gh api "users/$reviewerLogin" --jq '.id'
+          if (-not $reviewerId) { throw "GitHub reviewer '$reviewerLogin' was not found." }
+
+          foreach ($environment in @('platform', 'dev', 'test', 'prod')) {
+              $protected = $environment -ne 'dev'
+              $body = @{
+                  wait_timer = 0
+                  prevent_self_review = $false
+                  reviewers = if ($protected) { @(@{ type = 'User'; id = [long]$reviewerId }) } else { @() }
+                  deployment_branch_policy = if ($environment -eq 'prod') {
+                      @{ protected_branches = $false; custom_branch_policies = $true }
+                  }
+                  else { $null }
+              } | ConvertTo-Json -Depth 6 -Compress
+
+              $body | gh api --method PUT "repos/$repo/environments/$environment" --input - | Out-Null
+              Write-Host "Configured environment '$environment'."
+          }
+
+          $policies = gh api "repos/$repo/environments/prod/deployment-branch-policies" | ConvertFrom-Json
+          if (-not ($policies.branch_policies | Where-Object { $_.name -eq 'main' })) {
+              @{ name = 'main'; type = 'branch' } | ConvertTo-Json -Compress |
+                  gh api --method POST "repos/$repo/environments/prod/deployment-branch-policies" --input - | Out-Null
+          }
+
+      - name: Set GitHub Actions variables
+        shell: pwsh
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $variables = [ordered]@{
+              AZURE_CLIENT_ID = $env:DEPLOYMENT_CLIENT_ID
+              AZURE_TENANT_ID = $env:AZURE_TENANT_ID
+              AZURE_SUBSCRIPTION_ID = $env:AZURE_SUBSCRIPTION_ID
+              FABRIC_CICD_SP_OBJECT_ID = $env:DEPLOYMENT_OBJECT_ID
+              FABRIC_ITEMS_OWNER = $env:GITHUB_REPOSITORY_OWNER
+              FABRIC_ITEMS_REPOSITORY = $env:INPUT_ITEMS_REPOSITORY
+              TF_STATE_RESOURCE_GROUP = $env:INPUT_STATE_RESOURCE_GROUP
+              TF_STATE_STORAGE_ACCOUNT = $env:INPUT_STORAGE_ACCOUNT_NAME
+          }
+
+          foreach ($entry in $variables.GetEnumerator()) {
+              gh variable set $entry.Key --body $entry.Value --repo $repo
+              foreach ($environment in @('platform', 'dev', 'test', 'prod')) {
+                  gh variable set $entry.Key --body $entry.Value --env $environment --repo $repo
+              }
+          }
+
+      - name: Dispatch Terraform deployment
+        if: inputs.trigger_apply
+        shell: bash
+        run: gh workflow run terraform-apply.yml --ref "${{ github.event.repository.default_branch }}"
+
+      - name: Bootstrap summary
+        shell: bash
+        run: |
+          {
+            echo "## Bootstrap complete"
+            echo
+            echo "Permanent deployment identity: \`${DEPLOYMENT_CLIENT_ID}\`"
+            echo "State: \`${INPUT_STORAGE_ACCOUNT_NAME}/tfstate-gh\`"
+            echo
+            echo "Remove \`BOOTSTRAP_GITHUB_TOKEN\` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
+          } >> "$GITHUB_STEP_SUMMARY"

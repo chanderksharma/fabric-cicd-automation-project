@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "rpt_sales",
+    "description": "Sales overview report bound to sm_sales."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "3f0d9c11-1a4e-4a2b-9c31-0b1d7e5a4c08"
+  }
+}

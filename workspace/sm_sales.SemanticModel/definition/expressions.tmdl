@@ -1,0 +1,17 @@
+/// SQL analytics endpoint of the Gold lakehouse. Rewritten per environment by
+/// the find_replace rule in workspace/parameter.yml.
+expression SqlEndpoint = "SQL_ENDPOINT_PLACEHOLDER" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	lineageTag: 7c1a5f20-0001-4c00-9a00-000000000001
+
+/// Gold lakehouse GUID. Resolved dynamically by fabric-cicd at publish time.
+expression GoldLakehouseId = "00000000-0000-0000-0000-0000000000gd" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	lineageTag: 7c1a5f20-0001-4c00-9a00-000000000002
+
+expression DatabaseQuery =
+		let
+			Source = Sql.Database(SqlEndpoint, GoldLakehouseId)
+		in
+			Source
+	lineageTag: 7c1a5f20-0001-4c00-9a00-000000000003
+
+	annotation PBI_IncludeFutureArtifacts = False

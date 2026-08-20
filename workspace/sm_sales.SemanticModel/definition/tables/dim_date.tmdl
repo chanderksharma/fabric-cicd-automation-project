@@ -1,0 +1,48 @@
+table dim_date
+	lineageTag: 7c1a5f20-0002-4c00-9a00-000000000002
+	dataCategory: Time
+
+	column DateKey
+		isKey
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 7c1a5f20-0005-4c00-9a00-000000000001
+		summarizeBy: none
+		sourceColumn: DateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 7c1a5f20-0005-4c00-9a00-000000000002
+		summarizeBy: none
+		sourceColumn: CalendarYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarMonth
+		dataType: int64
+		formatString: 0
+		lineageTag: 7c1a5f20-0005-4c00-9a00-000000000003
+		summarizeBy: none
+		sourceColumn: CalendarMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthName
+		dataType: string
+		lineageTag: 7c1a5f20-0005-4c00-9a00-000000000004
+		summarizeBy: none
+		sourceColumn: MonthName
+		sortByColumn: CalendarMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	partition dim_date = entity
+		mode: directLake
+		source
+			entityName: dim_date
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table

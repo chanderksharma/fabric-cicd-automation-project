@@ -1,0 +1,429 @@
+name: terraform-apply
+
+# Infrastructure pipeline. Runs on merge to main and walks the environments in order:
+#
+#   platform -> dev -> test -> prod -> deployment pipeline
+#
+# Each Terraform job is bound to a GitHub Environment. test and prod carry
+# required reviewers, so the run pauses for approval before touching them.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: '1.11.0'
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  # CI owns the gh lane and nothing else. Hardcoded rather than taken from a
+  # repository variable, so a mistyped value cannot point a workflow at the
+  # manually built estate.
+  TF_VAR_lane: gh
+  TF_VAR_github_owner: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_github_repository: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  TF_VAR_git_owner_name: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_git_repository_name: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  STATE_CONTAINER: tfstate-gh
+  STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Capacity and Azure-plane RBAC. Shared by every environment, so it must
+  # converge before any workspace is planned.
+  # ---------------------------------------------------------------------------
+  apply-platform:
+    name: apply platform
+    runs-on: ubuntu-latest
+    environment: platform
+    concurrency:
+      group: terraform-apply-platform
+      cancel-in-progress: false
+    outputs:
+      capacity_names: ${{ steps.outputs.outputs.capacity_names }}
+      github_connection_id: ${{ steps.outputs.outputs.github_connection_id }}
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check GitHub connection credential
+        shell: bash
+        run: |
+          if [ -z "${TF_VAR_github_pat}" ]; then
+            echo "Repository secret FABRIC_GITHUB_PAT is required." >&2
+            exit 1
+          fi
+
+      - name: Detect existing workspaces
+        shell: bash
+        run: |
+          create_pipeline=true
+          for environment in dev test prod; do
+            terraform -chdir=infra/workspace init -reconfigure -no-color \
+              -backend-config="envs/${environment}.backend.hcl" \
+              -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
+              -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
+              -backend-config="container_name=${STATE_CONTAINER}"
+            if ! terraform -chdir=infra/workspace output -raw workspace_id >/dev/null 2>&1; then
+              create_pipeline=false
+              break
+            fi
+          done
+          echo "CREATE_DEPLOYMENT_PIPELINE=${create_pipeline}" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        working-directory: infra/platform
+        run: |
+          terraform init -no-color \
+            -backend-config=platform.backend.hcl \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Terraform plan
+        working-directory: infra/platform
+        # Workspaces do not exist during the first platform pass.
+        run: |
+          terraform plan -no-color -out=tfplan.binary \
+            -var="create_deployment_pipeline=${CREATE_DEPLOYMENT_PIPELINE}"
+
+      - name: Terraform apply
+        working-directory: infra/platform
+        run: terraform apply -no-color -auto-approve tfplan.binary
+
+      - name: Export outputs
+        id: outputs
+        working-directory: infra/platform
+        run: |
+          {
+            echo "capacity_names<<EOF"
+            terraform output -json capacity_names
+            echo "EOF"
+            echo "github_connection_id=$(terraform output -raw github_connection_id)"
+          } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Workspaces. Identical steps per environment - only the backend, var file and
+  # GitHub Environment differ.
+  # ---------------------------------------------------------------------------
+  apply-dev:
+    name: apply dev
+    runs-on: ubuntu-latest
+    needs: apply-platform
+    environment: dev
+    concurrency:
+      group: terraform-apply-dev
+      cancel-in-progress: false
+    outputs:
+      workspace_id: ${{ steps.outputs.outputs.workspace_id }}
+      workspace_name: ${{ steps.outputs.outputs.workspace_name }}
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/workspace
+        run: |
+          terraform init -no-color \
+            -backend-config=envs/dev.backend.hcl \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Terraform plan
+        working-directory: infra/workspace
+        run: |
+          terraform plan -no-color -out=tfplan.binary \
+            -var-file=envs/dev.tfvars
+
+      - name: Terraform apply
+        working-directory: infra/workspace
+        run: terraform apply -no-color -auto-approve tfplan.binary
+
+      - name: Export outputs
+        id: outputs
+        working-directory: infra/workspace
+        run: |
+          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
+          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+
+  apply-test:
+    name: apply test
+    runs-on: ubuntu-latest
+    needs: [apply-platform, apply-dev]
+    environment: test
+    concurrency:
+      group: terraform-apply-test
+      cancel-in-progress: false
+    outputs:
+      workspace_id: ${{ steps.outputs.outputs.workspace_id }}
+      workspace_name: ${{ steps.outputs.outputs.workspace_name }}
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/workspace
+        run: |
+          terraform init -no-color \
+            -backend-config=envs/test.backend.hcl \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Terraform plan
+        working-directory: infra/workspace
+        run: |
+          terraform plan -no-color -out=tfplan.binary \
+            -var-file=envs/test.tfvars
+
+      - name: Terraform apply
+        working-directory: infra/workspace
+        run: terraform apply -no-color -auto-approve tfplan.binary
+
+      - name: Export outputs
+        id: outputs
+        working-directory: infra/workspace
+        run: |
+          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
+          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+
+  apply-prod:
+    name: apply prod
+    runs-on: ubuntu-latest
+    needs: [apply-platform, apply-test]
+    environment: prod
+    concurrency:
+      group: terraform-apply-prod
+      cancel-in-progress: false
+    outputs:
+      workspace_id: ${{ steps.outputs.outputs.workspace_id }}
+      workspace_name: ${{ steps.outputs.outputs.workspace_name }}
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/workspace
+        run: |
+          terraform init -no-color \
+            -backend-config=envs/prod.backend.hcl \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Terraform plan
+        working-directory: infra/workspace
+        run: |
+          terraform plan -no-color -out=tfplan.binary \
+            -var-file=envs/prod.tfvars
+
+      - name: Terraform apply
+        working-directory: infra/workspace
+        run: terraform apply -no-color -auto-approve tfplan.binary
+
+      - name: Export outputs
+        id: outputs
+        working-directory: infra/workspace
+        run: |
+          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
+          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+
+  apply-deployment-pipeline:
+    name: apply deployment pipeline
+    runs-on: ubuntu-latest
+    needs: apply-prod
+    environment: platform
+    concurrency:
+      group: terraform-apply-platform
+      cancel-in-progress: false
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/platform
+        run: |
+          terraform init -no-color \
+            -backend-config=platform.backend.hcl \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Terraform apply
+        working-directory: infra/platform
+        run: |
+          terraform plan -no-color -out=tfplan.binary \
+            -var=create_deployment_pipeline=true
+          terraform apply -no-color -auto-approve tfplan.binary
+

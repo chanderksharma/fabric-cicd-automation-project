@@ -1,0 +1,175 @@
+{
+  "properties": {
+    "description": "Daily sales ingestion. Managed by fabric-cicd - do not edit outside dev.",
+    "activities": [
+      {
+        "name": "Copy_Landing_To_Bronze",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "ParquetSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": true,
+              "enablePartitionDiscovery": false
+            },
+            "formatSettings": {
+              "type": "ParquetReadSettings"
+            },
+            "datasetSettings": {
+              "type": "Parquet",
+              "typeProperties": {
+                "location": {
+                  "type": "AzureBlobFSLocation",
+                  "fileSystem": "sales",
+                  "folderPath": {
+                    "value": "@concat('dt=', formatDateTime(pipeline().parameters.p_run_date, 'yyyy-MM-dd'))",
+                    "type": "Expression"
+                  }
+                },
+                "compressionCodec": "snappy"
+              },
+              "schema": [],
+              "externalReferences": {
+                "connection": "aaaaaaaa-0000-0000-0000-000000000001"
+              },
+              "annotations": []
+            }
+          },
+          "sink": {
+            "type": "ParquetSink",
+            "storeSettings": {
+              "type": "LakehouseWriteSettings",
+              "copyBehavior": "PreserveHierarchy"
+            },
+            "formatSettings": {
+              "type": "ParquetWriteSettings"
+            },
+            "datasetSettings": {
+              "type": "Parquet",
+              "typeProperties": {
+                "location": {
+                  "type": "LakehouseLocation",
+                  "fileSystem": "Files",
+                  "folderPath": {
+                    "value": "@concat('raw/sales/dt=', formatDateTime(pipeline().parameters.p_run_date, 'yyyy-MM-dd'))",
+                    "type": "Expression"
+                  }
+                },
+                "compressionCodec": "snappy"
+              },
+              "schema": [],
+              "linkedService": {
+                "name": "lh_bronze",
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "00000000-0000-0000-0000-0000000000ws",
+                    "artifactId": "00000000-0000-0000-0000-0000000000br",
+                    "rootFolder": "Files"
+                  },
+                  "annotations": []
+                }
+              },
+              "annotations": []
+            }
+          },
+          "enableStaging": false,
+          "parallelCopies": {
+            "value": "@pipeline().parameters.p_parallel_copies",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "Run_Ingest_Bronze",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "Copy_Landing_To_Bronze",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-0000000000n1",
+          "workspaceId": "00000000-0000-0000-0000-0000000000ws",
+          "parameters": {
+            "p_run_date": {
+              "value": {
+                "value": "@formatDateTime(pipeline().parameters.p_run_date, 'yyyy-MM-dd')",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "p_source_container": {
+              "value": "sales",
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "Run_Transform_Gold",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "Run_Ingest_Bronze",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-0000000000n2",
+          "workspaceId": "00000000-0000-0000-0000-0000000000ws",
+          "parameters": {
+            "p_run_date": {
+              "value": {
+                "value": "@formatDateTime(pipeline().parameters.p_run_date, 'yyyy-MM-dd')",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "p_run_date": {
+        "type": "string",
+        "defaultValue": "@utcNow()"
+      },
+      "p_batch_size": {
+        "type": "int",
+        "defaultValue": 1000
+      },
+      "p_parallel_copies": {
+        "type": "int",
+        "defaultValue": 4
+      }
+    },
+    "annotations": [],
+    "lastModifiedByObjectId": "",
+    "lastPublishTime": ""
+  }
+}

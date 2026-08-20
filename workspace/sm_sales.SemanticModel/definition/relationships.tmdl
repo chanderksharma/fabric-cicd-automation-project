@@ -1,0 +1,3 @@
+relationship rel_fact_sales_dim_date
+	fromColumn: fact_sales.OrderDate
+	toColumn: dim_date.DateKey

@@ -1,0 +1,82 @@
+table fact_sales
+	lineageTag: 7c1a5f20-0002-4c00-9a00-000000000001
+
+	measure 'Total Sales' = SUM(fact_sales[SalesAmount])
+		formatString: \$#,0.00;(\$#,0.00);\$#,0.00
+		lineageTag: 7c1a5f20-0003-4c00-9a00-000000000001
+
+	measure 'Order Count' = DISTINCTCOUNT(fact_sales[OrderId])
+		formatString: #,0
+		lineageTag: 7c1a5f20-0003-4c00-9a00-000000000002
+
+	measure 'Average Order Value' = DIVIDE([Total Sales], [Order Count])
+		formatString: \$#,0.00
+		lineageTag: 7c1a5f20-0003-4c00-9a00-000000000003
+
+	column OrderId
+		dataType: string
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000001
+		summarizeBy: none
+		sourceColumn: OrderId
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerId
+		dataType: string
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000002
+		summarizeBy: none
+		sourceColumn: CustomerId
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductId
+		dataType: string
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000003
+		summarizeBy: none
+		sourceColumn: ProductId
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrderDate
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000004
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quantity
+		dataType: int64
+		formatString: 0
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000005
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column UnitPrice
+		dataType: decimal
+		formatString: \$#,0.00
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000006
+		summarizeBy: none
+		sourceColumn: UnitPrice
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesAmount
+		dataType: decimal
+		formatString: \$#,0.00
+		lineageTag: 7c1a5f20-0004-4c00-9a00-000000000007
+		summarizeBy: sum
+		sourceColumn: SalesAmount
+
+		annotation SummarizationSetBy = Automatic
+
+	partition fact_sales = entity
+		mode: directLake
+		source
+			entityName: fact_sales
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table

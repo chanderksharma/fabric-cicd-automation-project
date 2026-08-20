@@ -1,0 +1,310 @@
+name: terraform-plan
+
+# Runs on every pull request that touches infrastructure. Plans all four
+# Terraform roots, posts each plan back to the PR, and uploads the plan files
+# for review. Nothing is applied here.
+#
+# Auth: OIDC federated credential with subject
+#   repo:<org>/<repo>:pull_request
+# The permanent deployment identity performs cloud reads and grants the current
+# hosted runner perimeter access. Plans use -lock=false so a review run does not
+# acquire or update the state lease.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-*.yml'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: '1.11.0'
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  # Terraform inputs. Mirrored locally by scripts/Load-Env.ps1 reading .env,
+  # so the same variable names drive both paths.
+  #
+  # The lane is hardcoded rather than taken from a repository variable: CI owns
+  # the gh lane and nothing else. Making it configurable would let a mistyped
+  # variable point a workflow at the manually built estate.
+  TF_VAR_lane: gh
+  TF_VAR_github_owner: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_github_repository: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  TF_VAR_git_owner_name: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_git_repository_name: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  STATE_CONTAINER: tfstate-gh
+  STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+  TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+  TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+  # Keeps the connection resource in the platform plan without exposing a PAT.
+  # The value is never applied by this workflow.
+  TF_VAR_github_pat: plan-only-placeholder
+  ARM_USE_OIDC: 'true'
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  FABRIC_USE_OIDC: 'true'
+  FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Static analysis. No cloud credentials required, so it runs first and fails
+  # fast on formatting and policy problems.
+  # ---------------------------------------------------------------------------
+  static-analysis:
+    name: fmt / validate / tflint / checkov
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive -diff infra
+
+      - name: Terraform validate (all roots and modules)
+        run: |
+          set -euo pipefail
+          for dir in infra/platform infra/workspace infra/modules/*/; do
+            echo "::group::validate ${dir}"
+            terraform -chdir="${dir}" init -backend=false -no-color
+            terraform -chdir="${dir}" validate -no-color
+            echo "::endgroup::"
+          done
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: TFLint init
+        run: tflint --chdir=infra --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: TFLint
+        run: tflint --chdir=infra --recursive --format=compact --minimum-failure-severity=warning
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra
+          framework: terraform
+          download_external_modules: false
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-sarif
+          path: checkov.sarif
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # One plan per Terraform root. The matrix is the single place that maps a
+  # logical target to its directory, backend config and variable file.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: plan (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: static-analysis
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: platform
+            dir: infra/platform
+            backend: platform.backend.hcl
+            varfile: terraform.tfvars
+          - target: dev
+            dir: infra/workspace
+            backend: envs/dev.backend.hcl
+            varfile: envs/dev.tfvars
+          - target: test
+            dir: infra/workspace
+            backend: envs/test.backend.hcl
+            varfile: envs/test.tfvars
+          - target: prod
+            dir: infra/workspace
+            backend: envs/prod.backend.hcl
+            varfile: envs/prod.tfvars
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        shell: pwsh
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER `
+              -KeepStale
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Detect existing workspaces
+        if: matrix.target == 'platform'
+        shell: bash
+        run: |
+          create_pipeline=true
+          for environment in dev test prod; do
+            terraform -chdir=infra/workspace init -reconfigure -no-color \
+              -backend-config="envs/${environment}.backend.hcl" \
+              -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
+              -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
+              -backend-config="container_name=${STATE_CONTAINER}"
+            if ! terraform -chdir=infra/workspace output -raw workspace_id >/dev/null 2>&1; then
+              create_pipeline=false
+              break
+            fi
+          done
+          echo "TF_CLI_ARGS_plan=-var=create_deployment_pipeline=${create_pipeline}" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        working-directory: ${{ matrix.dir }}
+        # The backend file names the ml container; the later -backend-config wins.
+        run: |
+          terraform init -no-color \
+            -backend-config=${{ matrix.backend }} \
+            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+
+      - name: Resolve GitHub connection
+        if: matrix.target != 'platform'
+        shell: bash
+        run: |
+          terraform -chdir=infra/platform init -no-color \
+            -backend-config=platform.backend.hcl \
+            -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
+            -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          connection_id=$(terraform -chdir=infra/platform output -raw github_connection_id 2>/dev/null || true)
+          if [ -n "${connection_id}" ]; then
+            echo "TF_VAR_github_connection_id=${connection_id}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform plan
+        id: plan
+        working-directory: ${{ matrix.dir }}
+        # Review runs do not acquire or update the state lease.
+        run: |
+          set +e
+          terraform plan -no-color -lock=false -detailed-exitcode \
+            -var-file=${{ matrix.varfile }} \
+            -out=tfplan-${{ matrix.target }}.binary > plan.stdout 2> plan.stderr
+          exitcode=$?
+          set -e
+          echo "exitcode=${exitcode}" >> "$GITHUB_OUTPUT"
+          cat plan.stdout
+          cat plan.stderr >&2
+          if [ "${exitcode}" -eq 1 ]; then exit 1; fi
+          if [ "${exitcode}" -eq 0 ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render plan summary
+        id: summary
+        working-directory: ${{ matrix.dir }}
+        run: |
+          terraform show -no-color tfplan-${{ matrix.target }}.binary > plan.txt
+          # Trim to stay inside the 65 536 character GitHub comment limit.
+          head -c 60000 plan.txt > plan.trimmed.txt
+          if [ "$(wc -c < plan.txt)" -gt 60000 ]; then
+            echo "" >> plan.trimmed.txt
+            echo "... output truncated, download the plan artifact for the full text ..." >> plan.trimmed.txt
+          fi
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # The binary plan can embed resource attribute values. Artifacts
+          # inherit repository visibility - keep this repository private.
+          name: tfplan-${{ matrix.target }}
+          path: |
+            ${{ matrix.dir }}/tfplan-${{ matrix.target }}.binary
+            ${{ matrix.dir }}/plan.txt
+          retention-days: 5
+
+      - name: Comment plan on pull request
+        uses: actions/github-script@v7
+        env:
+          TARGET: ${{ matrix.target }}
+          PLAN_DIR: ${{ matrix.dir }}
+          HAS_CHANGES: ${{ steps.plan.outputs.has_changes }}
+        with:
+          script: |
+            const fs = require('fs');
+            const target = process.env.TARGET;
+            const marker = `<!-- terraform-plan:${target} -->`;
+            const plan = fs.readFileSync(`${process.env.PLAN_DIR}/plan.trimmed.txt`, 'utf8');
+            const changed = process.env.HAS_CHANGES === 'true';
+            const body = [
+              marker,
+              `### Terraform plan \`${target}\` ${changed ? ':warning: changes detected' : ':white_check_mark: no changes'}`,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

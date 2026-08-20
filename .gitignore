@@ -1,0 +1,51 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+# Variable files may carry environment-specific values, so exclude by default
+# and re-include only the committed ones. The ** prefix matters: a bare
+# "envs/*.tfvars" would only match a top-level envs/ directory.
+*.tfvars
+!**/envs/*.tfvars
+!**/terraform.tfvars
+!**/*.auto.tfvars
+!*.tfvars.example
+# Local-only overrides. Never committed.
+local.auto.tfvars
+*.local.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+tfplan
+*.tfplan
+.terraform.lock.hcl.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets - never commit
+*.pem
+*.pfx
+*.key
+.env
+.env.*
+!.env.example
+
+# Stray clone of the items repo; that repo is a sibling, not nested.
+fabric-workspace-items/

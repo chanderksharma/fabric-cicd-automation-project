@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "pl_ingest_daily",
+    "description": "Daily orchestration: copy landing files, then run the Bronze and Gold notebooks."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "3f0d9c11-1a4e-4a2b-9c31-0b1d7e5a4c06"
+  }
+}
