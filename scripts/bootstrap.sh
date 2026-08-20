@@ -485,7 +485,7 @@ JSON
       return 0
     fi
 
-    if [[ "$attempt" -eq 6 ]] || ! grep -Eqi 'duplicate values|conflict|temporar' <<<"$output"; then
+    if [[ "$attempt" -eq 6 ]] || ! grep -Eqi 'already exists|duplicate values|conflict|temporar' <<<"$output"; then
       echo "az ad app federated-credential create failed: $output" >&2
       return 1
     fi
