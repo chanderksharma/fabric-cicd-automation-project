@@ -148,7 +148,8 @@ jobs:
               -ItemsRepoPath $itemsRepoPath `
               -IncludeBranches `
               -KeepServicePrincipal `
-              -Force
+              -Force `
+              -Confirm:$false
 
   cleanup:
     name: remove bootstrap-managed components

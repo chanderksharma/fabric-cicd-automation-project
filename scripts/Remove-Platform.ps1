@@ -103,6 +103,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 
 $FabricApi = 'https://api.fabric.microsoft.com'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$RemovePlatformCmdlet = $PSCmdlet
 
 # The lane suffix appears in three places that must agree: resource names, the
 # state container and the app registration. -Legacy drops it from all three.
@@ -205,7 +206,7 @@ function Invoke-TerraformDestroy {
         [Parameter(Mandatory)][string] $Label
     )
 
-    if (-not $PSCmdlet.ShouldProcess($Label, 'terraform destroy')) { return $true }
+    if (-not $RemovePlatformCmdlet.ShouldProcess($Label, 'terraform destroy')) { return $true }
 
     Push-Location (Join-Path $RepoRoot $Directory)
     try {
@@ -255,7 +256,7 @@ function Remove-DeploymentPipelines {
     }
 
     foreach ($item in $targets) {
-        if (-not $PSCmdlet.ShouldProcess($item.displayName, 'delete deployment pipeline')) { continue }
+        if (-not $RemovePlatformCmdlet.ShouldProcess($item.displayName, 'delete deployment pipeline')) { continue }
         if ((Invoke-AzQuiet @('rest', '--method', 'DELETE', '--url', "$FabricApi/v1/deploymentPipelines/$($item.id)", '--resource', $FabricApi)) -eq 0) {
             Write-Host "    deleted '$($item.displayName)'"
             Record -Kind 'deployment pipeline' -Name $item.displayName -Status 'deleted'
@@ -284,7 +285,7 @@ else {
         if (-not $cap) { continue }
         $state = Invoke-AzJson @('resource', 'show', '--ids', $cap.id, '--query', 'properties.state', '-o', 'json')
         if ($state -eq 'Paused') {
-            if ($PSCmdlet.ShouldProcess($cap.name, 'resume capacity')) {
+            if ($RemovePlatformCmdlet.ShouldProcess($cap.name, 'resume capacity')) {
                 if ((Invoke-AzQuiet @('fabric', 'capacity', 'resume', '--resource-group', $rg, '--capacity-name', $cap.name)) -eq 0) {
                     Write-Host "    resumed $($cap.name)"
                 }
@@ -350,7 +351,7 @@ function Remove-FabricItem {
     }
 
     foreach ($item in $targets) {
-        if (-not $PSCmdlet.ShouldProcess($item.displayName, "delete $Kind")) { continue }
+        if (-not $RemovePlatformCmdlet.ShouldProcess($item.displayName, "delete $Kind")) { continue }
         if ((Invoke-AzQuiet @('rest', '--method', 'DELETE', '--url', "$FabricApi/v1/$Collection/$($item.id)", '--resource', $FabricApi)) -eq 0) {
             Write-Host "    deleted $Kind '$($item.displayName)'"
             Record -Kind $Kind -Name $item.displayName -Status 'deleted (orphan)'
@@ -369,7 +370,7 @@ Remove-FabricItem -Collection 'connections' -Kind 'connection'
 # outlived its state file.
 $rg = "rg-$NamePrefix-fabric"
 if ((Invoke-AzQuiet @('group', 'show', '--name', $rg, '-o', 'none')) -eq 0) {
-    if ($PSCmdlet.ShouldProcess($rg, 'delete resource group')) {
+    if ($RemovePlatformCmdlet.ShouldProcess($rg, 'delete resource group')) {
         if ((Invoke-AzQuiet @('group', 'delete', '--name', $rg, '--yes')) -eq 0) {
             Write-Host "    deleted resource group $rg"
             Record -Kind 'resource group' -Name $rg -Status 'deleted'
@@ -395,7 +396,7 @@ else {
     if (-not $appId) {
         Write-Host "    '$AppName' not found"
     }
-    elseif ($PSCmdlet.ShouldProcess($AppName, 'delete app registration')) {
+    elseif ($RemovePlatformCmdlet.ShouldProcess($AppName, 'delete app registration')) {
         # Deleting the app removes its federated credentials and service
         # principal with it; the role assignments become orphaned GUIDs that
         # Azure cleans up on its own.
@@ -427,7 +428,7 @@ if ($IncludeBranches) {
         try {
             foreach ($environment in @('dev', 'test', 'prod')) {
                 $branch = "$BranchPrefix$environment"
-                if ($PSCmdlet.ShouldProcess("$branch in $ItemsRepoPath", 'delete branch')) {
+                if ($RemovePlatformCmdlet.ShouldProcess("$branch in $ItemsRepoPath", 'delete branch')) {
                     & git ls-remote --exit-code --heads $ItemsRemote "refs/heads/$branch" 2>&1 | Out-Null
                     $lookupExitCode = $LASTEXITCODE
                     if ($lookupExitCode -eq 2) {
@@ -469,7 +470,7 @@ if ($IncludeGroups) {
             Write-Host "    '$group' not found"
             continue
         }
-        if ($PSCmdlet.ShouldProcess($group, 'delete Entra group')) {
+        if ($RemovePlatformCmdlet.ShouldProcess($group, 'delete Entra group')) {
             if ((Invoke-AzQuiet @('ad', 'group', 'delete', '--group', $oid)) -eq 0) {
                 Write-Host "    deleted '$group'"
                 Record -Kind 'entra group' -Name $group -Status 'deleted'
@@ -491,7 +492,7 @@ if (-not $IncludeState) {
 elseif ((Invoke-AzQuiet @('group', 'show', '--name', $StateResourceGroup, '-o', 'none')) -ne 0) {
     Write-Host "    $StateResourceGroup already gone"
 }
-elseif ($PSCmdlet.ShouldProcess($StateResourceGroup, 'delete state resource group')) {
+elseif ($RemovePlatformCmdlet.ShouldProcess($StateResourceGroup, 'delete state resource group')) {
     # The CanNotDelete lock from bootstrap blocks the group delete, and also
     # blocks deleting perimeter rules, so it has to go first.
     if ((Invoke-AzQuiet @('lock', 'delete', '--name', $StateLockName, '--resource-group', $StateResourceGroup)) -eq 0) {
