@@ -7,7 +7,7 @@ name: terraform-plan
 # Auth: OIDC federated credential with subject
 #   repo:<org>/<repo>:pull_request
 # The permanent deployment identity performs cloud reads and grants the current
-# hosted runner perimeter access. Plans use -lock=false so a review run does not
+# self-hosted runner perimeter access. Plans use -lock=false so a review run does not
 # acquire or update the state lease.
 
 on:
@@ -58,6 +58,10 @@ env:
   FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
   FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   # ---------------------------------------------------------------------------
   # Static analysis. No cloud credentials required, so it runs first and fails
@@ -65,7 +69,7 @@ jobs:
   # ---------------------------------------------------------------------------
   static-analysis:
     name: fmt / validate / tflint / checkov
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -81,13 +85,17 @@ jobs:
 
       - name: Terraform validate (all roots and modules)
         run: |
-          set -euo pipefail
-          for dir in infra/platform infra/workspace infra/modules/*/; do
-            echo "::group::validate ${dir}"
-            terraform -chdir="${dir}" init -backend=false -no-color
-            terraform -chdir="${dir}" validate -no-color
-            echo "::endgroup::"
-          done
+          $directories = @('infra/platform', 'infra/workspace') + @(
+              Get-ChildItem -Path 'infra/modules' -Directory | ForEach-Object { $_.FullName }
+          )
+          foreach ($directory in $directories) {
+              Write-Host "::group::validate $directory"
+              terraform -chdir="$directory" init -backend=false -no-color
+              if ($LASTEXITCODE -ne 0) { throw "Terraform init failed in '$directory'." }
+              terraform -chdir="$directory" validate -no-color
+              if ($LASTEXITCODE -ne 0) { throw "Terraform validate failed in '$directory'." }
+              Write-Host '::endgroup::'
+          }
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v6
@@ -102,15 +110,22 @@ jobs:
       - name: TFLint
         run: tflint --chdir=infra --recursive --format=compact --minimum-failure-severity=warning
 
-      - name: Checkov
-        uses: bridgecrewio/checkov-action@v12
+      - name: Setup Python
+        uses: actions/setup-python@v6
         with:
-          directory: infra
-          framework: terraform
-          download_external_modules: false
-          output_format: cli,sarif
-          output_file_path: console,checkov.sarif
-          soft_fail: false
+          python-version: '3.12'
+
+      - name: Install Checkov
+        run: python -m pip install --disable-pip-version-check checkov
+
+      - name: Checkov
+        run: |
+          checkov -d infra `
+            --framework terraform `
+            --download-external-modules false `
+            -o cli `
+            -o sarif `
+            --output-file-path console,checkov.sarif
 
       - name: Upload Checkov SARIF
         if: always()
@@ -126,7 +141,7 @@ jobs:
   # ---------------------------------------------------------------------------
   plan:
     name: plan (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     needs: static-analysis
     strategy:
       fail-fast: false
@@ -176,78 +191,88 @@ jobs:
 
       - name: Detect existing workspaces
         if: matrix.target == 'platform'
-        shell: bash
         run: |
-          create_pipeline=true
-          for environment in dev test prod; do
-            terraform -chdir=infra/workspace init -reconfigure -no-color \
-              -backend-config="envs/${environment}.backend.hcl" \
-              -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
-              -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
-              -backend-config="container_name=${STATE_CONTAINER}"
-            if ! terraform -chdir=infra/workspace output -raw workspace_id >/dev/null 2>&1; then
-              create_pipeline=false
-              break
-            fi
-          done
-          echo "TF_CLI_ARGS_plan=-var=create_deployment_pipeline=${create_pipeline}" >> "$GITHUB_ENV"
+          $createPipeline = $true
+          foreach ($environment in @('dev', 'test', 'prod')) {
+              terraform -chdir=infra/workspace init -reconfigure -no-color `
+                -backend-config="envs/$environment.backend.hcl" `
+                -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+                -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+                -backend-config="container_name=$env:STATE_CONTAINER"
+              if ($LASTEXITCODE -ne 0) { throw "Terraform init failed for '$environment'." }
+
+              $workspaceId = terraform -chdir=infra/workspace output -raw workspace_id 2>$null
+              if ($LASTEXITCODE -ne 0) {
+                  $createPipeline = $false
+                  break
+              }
+          }
+          $createPipelineValue = $createPipeline.ToString().ToLowerInvariant()
+          "TF_CLI_ARGS_plan=-var=create_deployment_pipeline=$createPipelineValue" |
+            Add-Content -Path $env:GITHUB_ENV -Encoding utf8
 
       - name: Terraform init
         working-directory: ${{ matrix.dir }}
         # The backend file names the ml container; the later -backend-config wins.
         run: |
-          terraform init -no-color \
-            -backend-config=${{ matrix.backend }} \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=${{ matrix.backend }} `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Resolve GitHub connection
         if: matrix.target != 'platform'
-        shell: bash
         run: |
-          terraform -chdir=infra/platform init -no-color \
-            -backend-config=platform.backend.hcl \
-            -backend-config="resource_group_name=${STATE_RESOURCE_GROUP}" \
-            -backend-config="storage_account_name=${STATE_STORAGE_ACCOUNT}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
-          connection_id=$(terraform -chdir=infra/platform output -raw github_connection_id 2>/dev/null || true)
-          if [ -n "${connection_id}" ]; then
-            echo "TF_VAR_github_connection_id=${connection_id}" >> "$GITHUB_ENV"
-          fi
+          terraform -chdir=infra/platform init -no-color `
+            -backend-config=platform.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
+          if ($LASTEXITCODE -ne 0) { throw 'Terraform platform init failed.' }
+
+          $connectionId = terraform -chdir=infra/platform output -raw github_connection_id 2>$null
+          if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($connectionId)) {
+              "TF_VAR_github_connection_id=$connectionId" |
+                Add-Content -Path $env:GITHUB_ENV -Encoding utf8
+          }
 
       - name: Terraform plan
         id: plan
         working-directory: ${{ matrix.dir }}
         # Review runs do not acquire or update the state lease.
         run: |
-          set +e
-          terraform plan -no-color -lock=false -detailed-exitcode \
-            -var-file=${{ matrix.varfile }} \
+          terraform plan -no-color -lock=false -detailed-exitcode `
+            -var-file=${{ matrix.varfile }} `
             -out=tfplan-${{ matrix.target }}.binary > plan.stdout 2> plan.stderr
-          exitcode=$?
-          set -e
-          echo "exitcode=${exitcode}" >> "$GITHUB_OUTPUT"
-          cat plan.stdout
-          cat plan.stderr >&2
-          if [ "${exitcode}" -eq 1 ]; then exit 1; fi
-          if [ "${exitcode}" -eq 0 ]; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
+          $exitCode = $LASTEXITCODE
+          "exitcode=$exitCode" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+          Get-Content -Path plan.stdout
+          Get-Content -Path plan.stderr | ForEach-Object { [Console]::Error.WriteLine($_) }
+          if ($exitCode -eq 1) { throw 'Terraform plan failed.' }
+          if ($exitCode -notin @(0, 2)) { throw "Terraform plan returned unexpected exit code $exitCode." }
+
+          $hasChanges = if ($exitCode -eq 2) { 'true' } else { 'false' }
+          "has_changes=$hasChanges" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
       - name: Render plan summary
         id: summary
         working-directory: ${{ matrix.dir }}
         run: |
-          terraform show -no-color tfplan-${{ matrix.target }}.binary > plan.txt
+          terraform show -no-color tfplan-${{ matrix.target }}.binary |
+            Set-Content -Path plan.txt -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Terraform show failed.' }
+
           # Trim to stay inside the 65 536 character GitHub comment limit.
-          head -c 60000 plan.txt > plan.trimmed.txt
-          if [ "$(wc -c < plan.txt)" -gt 60000 ]; then
-            echo "" >> plan.trimmed.txt
-            echo "... output truncated, download the plan artifact for the full text ..." >> plan.trimmed.txt
-          fi
+          $plan = Get-Content -Path plan.txt -Raw
+          $trimmed = if ($plan.Length -gt 60000) {
+              $plan.Substring(0, 60000) +
+                "`n`n... output truncated, download the plan artifact for the full text ...`n"
+          }
+          else {
+              $plan
+          }
+          Set-Content -Path plan.trimmed.txt -Value $trimmed -NoNewline -Encoding utf8
 
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7

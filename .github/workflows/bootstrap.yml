@@ -74,23 +74,28 @@ env:
 jobs:
   bootstrap:
     name: establish deployment trust
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Check seed credentials
-        shell: bash
+        shell: pwsh
         run: |
-          missing=false
-          for name in AZURE_BOOTSTRAP_CLIENT_ID AZURE_BOOTSTRAP_TENANT_ID AZURE_BOOTSTRAP_SUBSCRIPTION_ID GH_TOKEN FABRIC_GITHUB_PAT; do
-            if [ -z "${!name}" ]; then
-              echo "Required repository variable or secret ${name} is missing." >&2
-              missing=true
-            fi
-          done
-          if [ "${missing}" = true ]; then exit 1; fi
+          $required = @(
+              'AZURE_BOOTSTRAP_CLIENT_ID'
+              'AZURE_BOOTSTRAP_TENANT_ID'
+              'AZURE_BOOTSTRAP_SUBSCRIPTION_ID'
+              'GH_TOKEN'
+              'FABRIC_GITHUB_PAT'
+          )
+          $missing = @($required | Where-Object {
+              [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+          })
+          if ($missing.Count -gt 0) {
+              throw "Required repository variables or secrets are missing: $($missing -join ', ')."
+          }
 
       - name: Azure login with federated bootstrap identity
         uses: azure/login@v3
@@ -112,12 +117,12 @@ jobs:
           "AZURE_SUBSCRIPTION_ID=$($account.id)" >> $env:GITHUB_ENV
 
       - name: Check GitHub administration token
-        shell: bash
+        shell: pwsh
         run: |
-          if [ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.permissions.admin')" != "true" ]; then
-            echo "BOOTSTRAP_GITHUB_TOKEN must have repository administration access." >&2
-            exit 1
-          fi
+          $hasAdmin = gh api "repos/$env:GITHUB_REPOSITORY" --jq '.permissions.admin'
+          if ($LASTEXITCODE -ne 0 -or $hasAdmin -ne 'true') {
+              throw 'BOOTSTRAP_GITHUB_TOKEN must have repository administration access.'
+          }
 
       - name: Create and initialize items repository
         shell: pwsh
@@ -287,17 +292,17 @@ jobs:
 
       - name: Dispatch Terraform deployment
         if: inputs.trigger_apply
-        shell: bash
-        run: gh workflow run terraform-apply.yml --ref "${{ github.event.repository.default_branch }}"
+        shell: pwsh
+        run: gh workflow run terraform-apply.yml --ref '${{ github.event.repository.default_branch }}'
 
       - name: Bootstrap summary
-        shell: bash
+        shell: pwsh
         run: |
-          {
-            echo "## Bootstrap complete"
-            echo
-            echo "Permanent deployment identity: \`${DEPLOYMENT_CLIENT_ID}\`"
-            echo "State: \`${INPUT_STORAGE_ACCOUNT_NAME}/tfstate-gh\`"
-            echo
-            echo "Remove \`BOOTSTRAP_GITHUB_TOKEN\` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
-          } >> "$GITHUB_STEP_SUMMARY"
+          @(
+              '## Bootstrap complete'
+              ''
+              "Permanent deployment identity: ``$env:DEPLOYMENT_CLIENT_ID``"
+              "State: ``$env:INPUT_STORAGE_ACCOUNT_NAME/tfstate-gh``"
+              ''
+              "Remove ``BOOTSTRAP_GITHUB_TOKEN`` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8

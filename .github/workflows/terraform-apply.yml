@@ -1,6 +1,6 @@
 name: terraform-apply
 
-# Infrastructure pipeline. Runs on merge to main and walks the environments in order:
+# Infrastructure pipeline. Runs manually and walks the environments in order:
 #
 #   platform -> dev -> test -> prod -> deployment pipeline
 #
@@ -8,11 +8,6 @@ name: terraform-apply
 # required reviewers, so the run pauses for approval before touching them.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'infra/**'
-      - '.github/workflows/terraform-apply.yml'
   workflow_dispatch:
 
 permissions:
@@ -35,6 +30,10 @@ env:
   STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
   STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   # ---------------------------------------------------------------------------
   # Capacity and Azure-plane RBAC. Shared by every environment, so it must
@@ -42,7 +41,7 @@ jobs:
   # ---------------------------------------------------------------------------
   apply-platform:
     name: apply platform
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     environment: platform
     concurrency:
       group: terraform-apply-platform
@@ -88,27 +87,25 @@ jobs:
           terraform_wrapper: false
 
       - name: Check GitHub connection credential
-        shell: bash
         run: |
-          if [ -z "${TF_VAR_github_pat}" ]; then
-            echo "Repository secret FABRIC_GITHUB_PAT is required." >&2
-            exit 1
-          fi
+          if ([string]::IsNullOrWhiteSpace($env:TF_VAR_github_pat)) {
+              throw 'Repository secret FABRIC_GITHUB_PAT is required.'
+          }
 
       - name: Terraform init
         working-directory: infra/platform
         run: |
-          terraform init -no-color \
-            -backend-config=platform.backend.hcl \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=platform.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Terraform plan
         working-directory: infra/platform
         # Workspaces do not exist during the first platform pass.
         run: |
-          terraform plan -no-color -out=tfplan.binary \
+          terraform plan -no-color -out=tfplan.binary `
             -var=create_deployment_pipeline=false
 
       - name: Terraform apply
@@ -119,12 +116,17 @@ jobs:
         id: outputs
         working-directory: infra/platform
         run: |
-          {
-            echo "capacity_names<<EOF"
-            terraform output -json capacity_names
-            echo "EOF"
-            echo "github_connection_id=$(terraform output -raw github_connection_id)"
-          } >> "$GITHUB_OUTPUT"
+          $capacityNames = terraform output -json capacity_names
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read capacity_names.' }
+          $githubConnectionId = terraform output -raw github_connection_id
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read github_connection_id.' }
+
+          @(
+              'capacity_names<<EOF'
+              $capacityNames
+              'EOF'
+              "github_connection_id=$githubConnectionId"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
   # ---------------------------------------------------------------------------
   # Workspaces. Identical steps per environment - only the backend, var file and
@@ -132,7 +134,7 @@ jobs:
   # ---------------------------------------------------------------------------
   apply-dev:
     name: apply dev
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     needs: apply-platform
     environment: dev
     concurrency:
@@ -180,16 +182,16 @@ jobs:
       - name: Terraform init
         working-directory: infra/workspace
         run: |
-          terraform init -no-color \
-            -backend-config=envs/dev.backend.hcl \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=envs/dev.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary \
+          terraform plan -no-color -out=tfplan.binary `
             -var-file=envs/dev.tfvars
 
       - name: Terraform apply
@@ -200,12 +202,18 @@ jobs:
         id: outputs
         working-directory: infra/workspace
         run: |
-          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
-          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+          $workspaceId = terraform output -raw workspace_id
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_id.' }
+          $workspaceName = terraform output -raw workspace_name
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_name.' }
+          @(
+              "workspace_id=$workspaceId"
+              "workspace_name=$workspaceName"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
   apply-test:
     name: apply test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     needs: [apply-platform, apply-dev]
     environment: test
     concurrency:
@@ -253,16 +261,16 @@ jobs:
       - name: Terraform init
         working-directory: infra/workspace
         run: |
-          terraform init -no-color \
-            -backend-config=envs/test.backend.hcl \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=envs/test.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary \
+          terraform plan -no-color -out=tfplan.binary `
             -var-file=envs/test.tfvars
 
       - name: Terraform apply
@@ -273,12 +281,18 @@ jobs:
         id: outputs
         working-directory: infra/workspace
         run: |
-          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
-          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+          $workspaceId = terraform output -raw workspace_id
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_id.' }
+          $workspaceName = terraform output -raw workspace_name
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_name.' }
+          @(
+              "workspace_id=$workspaceId"
+              "workspace_name=$workspaceName"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
   apply-prod:
     name: apply prod
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     needs: [apply-platform, apply-test]
     environment: prod
     concurrency:
@@ -326,16 +340,16 @@ jobs:
       - name: Terraform init
         working-directory: infra/workspace
         run: |
-          terraform init -no-color \
-            -backend-config=envs/prod.backend.hcl \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=envs/prod.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary \
+          terraform plan -no-color -out=tfplan.binary `
             -var-file=envs/prod.tfvars
 
       - name: Terraform apply
@@ -346,12 +360,18 @@ jobs:
         id: outputs
         working-directory: infra/workspace
         run: |
-          echo "workspace_id=$(terraform output -raw workspace_id)" >> "$GITHUB_OUTPUT"
-          echo "workspace_name=$(terraform output -raw workspace_name)" >> "$GITHUB_OUTPUT"
+          $workspaceId = terraform output -raw workspace_id
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_id.' }
+          $workspaceName = terraform output -raw workspace_name
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read workspace_name.' }
+          @(
+              "workspace_id=$workspaceId"
+              "workspace_name=$workspaceName"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
 
   apply-deployment-pipeline:
     name: apply deployment pipeline
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     needs: apply-prod
     environment: platform
     concurrency:
@@ -397,15 +417,15 @@ jobs:
       - name: Terraform init
         working-directory: infra/platform
         run: |
-          terraform init -no-color \
-            -backend-config=platform.backend.hcl \
-            -backend-config="resource_group_name=${{ env.STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ env.STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}"
+          terraform init -no-color `
+            -backend-config=platform.backend.hcl `
+            -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
+            -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
+            -backend-config="container_name=$env:STATE_CONTAINER"
 
       - name: Terraform apply
         working-directory: infra/platform
         run: |
-          terraform plan -no-color -out=tfplan.binary \
+          terraform plan -no-color -out=tfplan.binary `
             -var=create_deployment_pipeline=true
           terraform apply -no-color -auto-approve tfplan.binary
