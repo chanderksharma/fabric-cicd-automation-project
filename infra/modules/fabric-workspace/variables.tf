@@ -84,10 +84,4 @@ variable "role_assignments" {
     error_message = "principal_type must be one of Group, User, ServicePrincipal, ServicePrincipalProfile."
   }
 
-  validation {
-    condition = anytrue([
-      for r in values(var.role_assignments) : r.role == "Admin"
-    ])
-    error_message = "At least one Admin role assignment is required so the workspace is never orphaned. Assign the CI/CD service principal."
-  }
 }

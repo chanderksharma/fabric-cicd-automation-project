@@ -9,13 +9,6 @@ locals {
     "${local.name_prefix}-${var.capacity_key}"
   )
 
-  admin_principal_id = coalesce(
-    var.cicd_service_principal_object_id,
-    data.azuread_client_config.current.object_id,
-  )
-
-  admin_principal_type = var.cicd_service_principal_object_id != null ? "ServicePrincipal" : "User"
-
   # Least privilege per environment. Humans lose write access as changes move
   # towards prod; every prod change must therefore flow through CI/CD.
   #
@@ -49,24 +42,16 @@ locals {
     analysts        = data.azuread_group.analysts.object_id
   }
 
-  role_assignments = merge(
-    {
-      # Non-negotiable: whoever drives deployments needs Admin to publish and to
-      # unpublish orphaned items.
-      cicd = {
-        principal_id   = local.admin_principal_id
-        principal_type = local.admin_principal_type
-        role           = "Admin"
-      }
-    },
-    {
-      for group_key, role in local.human_roles : group_key => {
-        principal_id   = local.group_object_ids[group_key]
-        principal_type = "Group"
-        role           = role
-      }
+  # Fabric automatically grants the workspace creator Admin. Managing that
+  # same principal again returns PrincipalAlreadyHasWorkspaceRolePermissions.
+  # Terraform manages the durable group assignments instead.
+  role_assignments = {
+    for group_key, role in local.human_roles : group_key => {
+      principal_id   = local.group_object_ids[group_key]
+      principal_type = "Group"
+      role           = role
     }
-  )
+  }
 
   description = coalesce(
     var.workspace_description,

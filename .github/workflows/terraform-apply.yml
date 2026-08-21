@@ -34,6 +34,10 @@ defaults:
   run:
     shell: pwsh
 
+concurrency:
+  group: fabric-gh-deployment
+  cancel-in-progress: false
+
 jobs:
   # ---------------------------------------------------------------------------
   # Capacity and Azure-plane RBAC. Shared by every environment, so it must

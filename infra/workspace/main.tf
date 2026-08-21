@@ -1,5 +1,3 @@
-data "azuread_client_config" "current" {}
-
 data "azuread_group" "platform_admins" {
   display_name     = var.platform_admin_group_name
   security_enabled = true
@@ -35,4 +33,18 @@ module "workspace" {
   skip_capacity_state_validation = var.skip_capacity_state_validation
   role_assignments               = local.role_assignments
   git_integration                = local.git_integration
+}
+
+data "fabric_workspace_role_assignments" "current" {
+  workspace_id = module.workspace.id
+
+  lifecycle {
+    postcondition {
+      condition = var.cicd_service_principal_object_id == null ? true : anytrue([
+        for assignment in self.values :
+        lower(assignment.principal.id) == lower(var.cicd_service_principal_object_id) && assignment.role == "Admin"
+      ])
+      error_message = "Fabric did not grant the CI/CD service principal the automatic workspace Admin role."
+    }
+  }
 }

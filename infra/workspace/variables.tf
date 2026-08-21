@@ -63,7 +63,7 @@ variable "capacity_display_name" {
 }
 
 variable "cicd_service_principal_object_id" {
-  description = "Object ID of the CI/CD service principal, granted workspace Admin. Null falls back to whoever is running Terraform, which is the ml lane's model."
+  description = "Object ID of the CI/CD service principal. When set, Terraform verifies Fabric granted it the automatic creator Admin role; that API-owned assignment is not recreated."
   type        = string
   default     = null
 
@@ -107,8 +107,8 @@ variable "role_overrides" {
   description = <<-EOT
     Optional per-environment override of the human role model. Keys must be one
     of platform_admins, data_engineers, analysts. Values must be a valid Fabric
-    workspace role. The CI/CD service principal is always Admin and cannot be
-    overridden.
+    workspace role. The CI/CD service principal's automatic Admin role cannot
+    be overridden here.
   EOT
   type        = map(string)
   default     = {}

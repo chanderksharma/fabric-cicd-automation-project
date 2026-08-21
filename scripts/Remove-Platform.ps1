@@ -428,13 +428,23 @@ if ($IncludeBranches) {
             foreach ($environment in @('dev', 'test', 'prod')) {
                 $branch = "$BranchPrefix$environment"
                 if ($PSCmdlet.ShouldProcess("$branch in $ItemsRepoPath", 'delete branch')) {
-                    & git push $ItemsRemote --delete $branch 2>&1 | Out-Null
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "    deleted remote branch $branch"
-                        Record -Kind 'branch' -Name $branch -Status 'deleted'
+                    & git ls-remote --exit-code --heads $ItemsRemote "refs/heads/$branch" 2>&1 | Out-Null
+                    $lookupExitCode = $LASTEXITCODE
+                    if ($lookupExitCode -eq 2) {
+                        Write-Host "    ($branch not on $ItemsRemote)"
+                    }
+                    elseif ($lookupExitCode -ne 0) {
+                        Record-Failure -Kind 'branch' -Name $branch -Reason "could not query $ItemsRemote"
                     }
                     else {
-                        Write-Host "    ($branch not on $ItemsRemote)"
+                        & git push $ItemsRemote --delete $branch 2>&1 | Out-Null
+                        if ($LASTEXITCODE -ne 0) {
+                            Record-Failure -Kind 'branch' -Name $branch -Reason "delete from $ItemsRemote failed"
+                            continue
+                        }
+
+                        Write-Host "    deleted remote branch $branch"
+                        Record -Kind 'branch' -Name $branch -Status 'deleted'
                     }
                     & git branch -D $branch 2>&1 | Out-Null
                 }

@@ -1,0 +1,247 @@
+name: terraform-destroy
+
+# Dismantles the GitHub Actions lane in dependency order. The deployment
+# identity removes the resources it owns; the bootstrap identity removes that
+# deployment identity only after the resource teardown succeeds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DISMANTLE-GH, or DISMANTLE-ALL when removing shared resources
+        required: true
+        type: string
+      remove_shared_groups:
+        description: Also delete the Entra groups shared with the manual lane
+        required: true
+        default: false
+        type: boolean
+      remove_shared_state:
+        description: Also delete the state account and perimeter shared with the manual lane
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: fabric-gh-deployment
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: '1.11.0'
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  TF_VAR_lane: gh
+  TF_VAR_github_owner: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_github_repository: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  TF_VAR_git_owner_name: ${{ vars.FABRIC_ITEMS_OWNER }}
+  TF_VAR_git_repository_name: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
+  STATE_CONTAINER: tfstate-gh
+  STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  confirm:
+    name: confirm destructive operation
+    runs-on: [self-hosted, Windows, X64]
+    steps:
+      - name: Validate confirmation and ref
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REMOVE_SHARED_GROUPS: ${{ inputs.remove_shared_groups }}
+          REMOVE_SHARED_STATE: ${{ inputs.remove_shared_state }}
+        run: |
+          $includesSharedResources =
+            $env:REMOVE_SHARED_GROUPS -eq 'true' -or
+            $env:REMOVE_SHARED_STATE -eq 'true'
+          $expectedConfirmation = if ($includesSharedResources) {
+            'DISMANTLE-ALL'
+          }
+          else {
+            'DISMANTLE-GH'
+          }
+
+          if ($env:CONFIRMATION -cne $expectedConfirmation) {
+            throw "Confirmation must be exactly $expectedConfirmation."
+          }
+
+          $expectedRef = "refs/heads/$env:DEFAULT_BRANCH"
+          if ($env:GITHUB_REF -ne $expectedRef) {
+              throw "Run this workflow from the default branch ($expectedRef)."
+          }
+
+  destroy:
+    name: dismantle gh lane
+    runs-on: [self-hosted, Windows, X64]
+    needs: confirm
+    environment: platform
+    timeout-minutes: 120
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      FABRIC_USE_OIDC: 'true'
+      FABRIC_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@v7
+
+      - name: Check items repository credential
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TF_VAR_github_pat)) {
+              throw 'Repository secret FABRIC_GITHUB_PAT is required.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TF_VAR_github_owner) -or
+            [string]::IsNullOrWhiteSpace($env:TF_VAR_github_repository)) {
+            throw 'FABRIC_ITEMS_OWNER and FABRIC_ITEMS_REPOSITORY variables are required.'
+          }
+
+      - name: Checkout items repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.FABRIC_ITEMS_OWNER }}/${{ vars.FABRIC_ITEMS_REPOSITORY }}
+          token: ${{ secrets.FABRIC_GITHUB_PAT }}
+          fetch-depth: 0
+          path: .teardown/items
+
+      - name: Azure login (deployment identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Grant runner access to Terraform state
+        run: |
+          ./scripts/Grant-MyIpToPerimeter.ps1 `
+              -ResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StorageAccount $env:STATE_STORAGE_ACCOUNT `
+              -Container $env:STATE_CONTAINER
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Destroy lane resources and item branches
+        run: |
+          $itemsRepoPath = (Resolve-Path '.teardown/items').Path
+          ./scripts/Remove-Platform.ps1 `
+              -Lane gh `
+              -SubscriptionId $env:ARM_SUBSCRIPTION_ID `
+              -StateResourceGroup $env:STATE_RESOURCE_GROUP `
+              -ItemsRepoPath $itemsRepoPath `
+              -IncludeBranches `
+              -KeepServicePrincipal `
+              -Force
+
+  cleanup:
+    name: remove bootstrap-managed components
+    runs-on: [self-hosted, Windows, X64]
+    needs: destroy
+    timeout-minutes: 30
+    env:
+      AZURE_BOOTSTRAP_CLIENT_ID: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+      AZURE_BOOTSTRAP_TENANT_ID: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+      AZURE_BOOTSTRAP_SUBSCRIPTION_ID: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+      REMOVE_SHARED_GROUPS: ${{ inputs.remove_shared_groups }}
+      REMOVE_SHARED_STATE: ${{ inputs.remove_shared_state }}
+    steps:
+      - name: Check bootstrap identity
+        run: |
+          $required = @(
+              'AZURE_BOOTSTRAP_CLIENT_ID'
+              'AZURE_BOOTSTRAP_TENANT_ID'
+              'AZURE_BOOTSTRAP_SUBSCRIPTION_ID'
+          )
+          $missing = @($required | Where-Object {
+              [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+          })
+          if ($missing.Count -gt 0) {
+              throw "Required repository variables are missing: $($missing -join ', ')."
+          }
+
+      - name: Azure login (bootstrap identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Remove shared Entra groups
+        if: inputs.remove_shared_groups
+        run: |
+          foreach ($group in @(
+              'sg-fabric-platform-admins'
+              'sg-fabric-data-engineers'
+              'sg-fabric-analysts'
+          )) {
+              $groupId = az ad group list --display-name $group --query '[0].id' -o tsv
+              if (-not $groupId) {
+                  Write-Host "'$group' already absent."
+                  continue
+              }
+
+              az ad group delete --group $groupId
+              if ($LASTEXITCODE -ne 0) { throw "Failed to delete Entra group '$group'." }
+              Write-Host "Deleted '$group'."
+          }
+
+      - name: Remove shared Terraform state foundation
+        if: inputs.remove_shared_state
+        run: |
+          az lock delete `
+              --name terraform-state-protect `
+              --resource-group $env:STATE_RESOURCE_GROUP 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'State deletion lock already absent.' }
+
+          az group delete `
+              --name $env:STATE_RESOURCE_GROUP `
+              --yes `
+              --no-wait
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to start deletion of '$env:STATE_RESOURCE_GROUP'."
+          }
+
+      - name: Remove deployment app registration
+        run: |
+          $appName = 'sp-fabric-cicd-gh'
+          $appId = az ad app list --display-name $appName --query '[0].appId' -o tsv
+          if (-not $appId) {
+              Write-Host "'$appName' already absent."
+              return
+          }
+
+          az ad app delete --id $appId
+          if ($LASTEXITCODE -ne 0) { throw "Failed to delete app registration '$appName'." }
+          Write-Host "Deleted '$appName'."
+
+      - name: Write teardown summary
+        if: always()
+        env:
+          CLEANUP_STATUS: ${{ job.status }}
+        run: |
+          @(
+              '## GitHub Actions lane teardown'
+              ''
+              "- Cleanup status: $env:CLEANUP_STATUS"
+              '- Lane resources and branches: removed by the preceding job'
+              '- Deployment app registration: removal requested'
+              "- Shared Entra group removal requested: $env:REMOVE_SHARED_GROUPS"
+              "- Shared Terraform state removal requested: $env:REMOVE_SHARED_STATE"
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
