@@ -96,7 +96,7 @@ jobs:
         working-directory: infra/platform
         run: |
           terraform init -no-color `
-            -backend-config=platform.backend.hcl `
+            "-backend-config=platform.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -105,7 +105,7 @@ jobs:
         working-directory: infra/platform
         # Workspaces do not exist during the first platform pass.
         run: |
-          terraform plan -no-color -out=tfplan.binary `
+          terraform plan -no-color "-out=tfplan.binary" `
             -var=create_deployment_pipeline=false
 
       - name: Terraform apply
@@ -183,7 +183,7 @@ jobs:
         working-directory: infra/workspace
         run: |
           terraform init -no-color `
-            -backend-config=envs/dev.backend.hcl `
+            "-backend-config=envs/dev.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -191,8 +191,8 @@ jobs:
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary `
-            -var-file=envs/dev.tfvars
+          terraform plan -no-color "-out=tfplan.binary" `
+            "-var-file=envs/dev.tfvars"
 
       - name: Terraform apply
         working-directory: infra/workspace
@@ -262,7 +262,7 @@ jobs:
         working-directory: infra/workspace
         run: |
           terraform init -no-color `
-            -backend-config=envs/test.backend.hcl `
+            "-backend-config=envs/test.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -270,8 +270,8 @@ jobs:
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary `
-            -var-file=envs/test.tfvars
+          terraform plan -no-color "-out=tfplan.binary" `
+            "-var-file=envs/test.tfvars"
 
       - name: Terraform apply
         working-directory: infra/workspace
@@ -341,7 +341,7 @@ jobs:
         working-directory: infra/workspace
         run: |
           terraform init -no-color `
-            -backend-config=envs/prod.backend.hcl `
+            "-backend-config=envs/prod.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -349,8 +349,8 @@ jobs:
       - name: Terraform plan
         working-directory: infra/workspace
         run: |
-          terraform plan -no-color -out=tfplan.binary `
-            -var-file=envs/prod.tfvars
+          terraform plan -no-color "-out=tfplan.binary" `
+            "-var-file=envs/prod.tfvars"
 
       - name: Terraform apply
         working-directory: infra/workspace
@@ -418,7 +418,7 @@ jobs:
         working-directory: infra/platform
         run: |
           terraform init -no-color `
-            -backend-config=platform.backend.hcl `
+            "-backend-config=platform.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -426,6 +426,6 @@ jobs:
       - name: Terraform apply
         working-directory: infra/platform
         run: |
-          terraform plan -no-color -out=tfplan.binary `
+          terraform plan -no-color "-out=tfplan.binary" `
             -var=create_deployment_pipeline=true
           terraform apply -no-color -auto-approve tfplan.binary

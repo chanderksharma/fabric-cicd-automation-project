@@ -216,7 +216,7 @@ jobs:
         # The backend file names the ml container; the later -backend-config wins.
         run: |
           terraform init -no-color `
-            -backend-config=${{ matrix.backend }} `
+            "-backend-config=${{ matrix.backend }}" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -225,7 +225,7 @@ jobs:
         if: matrix.target != 'platform'
         run: |
           terraform -chdir=infra/platform init -no-color `
-            -backend-config=platform.backend.hcl `
+            "-backend-config=platform.backend.hcl" `
             -backend-config="resource_group_name=$env:STATE_RESOURCE_GROUP" `
             -backend-config="storage_account_name=$env:STATE_STORAGE_ACCOUNT" `
             -backend-config="container_name=$env:STATE_CONTAINER"
@@ -243,8 +243,8 @@ jobs:
         # Review runs do not acquire or update the state lease.
         run: |
           terraform plan -no-color -lock=false -detailed-exitcode `
-            -var-file=${{ matrix.varfile }} `
-            -out=tfplan-${{ matrix.target }}.binary > plan.stdout 2> plan.stderr
+            "-var-file=${{ matrix.varfile }}" `
+            "-out=tfplan-${{ matrix.target }}.binary" > plan.stdout 2> plan.stderr
           $exitCode = $LASTEXITCODE
           "exitcode=$exitCode" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
           Get-Content -Path plan.stdout
