@@ -203,6 +203,7 @@ function Invoke-TerraformDestroy {
         [Parameter(Mandatory)][string] $BackendConfig,
         [Parameter(Mandatory)][string] $StateKey,
         [string] $VarFile,
+        [string[]] $VarOverrides = @(),
         [Parameter(Mandatory)][string] $Label
     )
 
@@ -221,6 +222,7 @@ function Invoke-TerraformDestroy {
 
         $tfArgs = @('destroy', '-auto-approve', '-no-color', "-var=lane=$TfLane")
         if ($VarFile) { $tfArgs += "-var-file=$VarFile" }
+        foreach ($assignment in $VarOverrides) { $tfArgs += "-var=$assignment" }
         & terraform @tfArgs
         if ($LASTEXITCODE -ne 0) {
             Record-Failure -Kind 'terraform destroy' -Name $Label -Reason 'destroy failed; the orphan sweep below will try to finish the job'
@@ -311,10 +313,16 @@ else {
     }
 
     Write-Step 'Destroying the platform (capacity, pipeline, connection, RBAC)'
+    # The pipeline's stage workspaces were destroyed above, so leaving the
+    # pipeline enabled makes its fabric_workspace lookups fail on read and
+    # aborts the destroy before the capacity, connection and RBAC are removed.
+    # Turning it off empties those for_each blocks; the pipeline itself is still
+    # destroyed, because destroy works from state rather than configuration.
     Invoke-TerraformDestroy `
         -Directory 'infra/platform' `
         -BackendConfig 'platform.backend.hcl' `
         -StateKey 'platform.tfstate' `
+        -VarOverrides @('create_deployment_pipeline=false') `
         -Label "$NamePrefix platform" | Out-Null
 }
 
