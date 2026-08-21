@@ -261,7 +261,7 @@ jobs:
           retention-days: 5
 
       - name: Comment plan on pull request
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TARGET: ${{ matrix.target }}
           PLAN_DIR: ${{ matrix.dir }}
