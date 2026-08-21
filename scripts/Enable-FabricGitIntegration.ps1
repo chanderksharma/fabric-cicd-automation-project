@@ -133,6 +133,15 @@ function Get-Settings {
     (Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers $headers).tenantSettings
 }
 
+function Get-RestErrorMessage {
+    param([Parameter(Mandatory)][System.Management.Automation.ErrorRecord] $ErrorRecord)
+
+    if (-not [string]::IsNullOrWhiteSpace($ErrorRecord.ErrorDetails.Message)) {
+        return $ErrorRecord.ErrorDetails.Message
+    }
+    return $ErrorRecord.Exception.Message
+}
+
 function Get-SettingGroups {
     param(
         [Parameter(Mandatory)] $Setting,
@@ -236,14 +245,13 @@ foreach ($setting in $targets) {
         $body.enabledSecurityGroups = @($enabledGroups | ForEach-Object {
                 @{ graphId = $_.graphId; name = $_.name }
             })
-        $body.excludedSecurityGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'excludedSecurityGroups' | `
+        $excludedGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'excludedSecurityGroups' | `
                 Where-Object { $_.graphId -ne $groupId } | ForEach-Object {
                 @{ graphId = $_.graphId; name = $_.name }
             })
-    }
-    elseif ($setting.canSpecifySecurityGroups) {
-        $body.enabledSecurityGroups = @()
-        $body.excludedSecurityGroups = @()
+        if ($excludedGroups.Count -gt 0) {
+            $body.excludedSecurityGroups = $excludedGroups
+        }
     }
 
     try {
@@ -254,7 +262,7 @@ foreach ($setting in $targets) {
         $changed++
     }
     catch {
-        throw "Could not configure $($setting.settingName): $($_.Exception.Message)"
+        throw "Could not configure $($setting.settingName): $(Get-RestErrorMessage -ErrorRecord $_)"
     }
 }
 
