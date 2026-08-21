@@ -31,6 +31,10 @@
 param(
     [string] $SecurityGroup = 'sg-fabric-platform-admins',
 
+    # Optional principal whose membership in SecurityGroup must be verified.
+    # Bootstrap passes the permanent deployment service principal here.
+    [string] $PrincipalObjectId,
+
     # Also enable the settings that let a service principal call Fabric APIs,
     # which CI needs.
     [switch] $IncludeServicePrincipal,
@@ -129,23 +133,70 @@ function Get-Settings {
     (Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers $headers).tenantSettings
 }
 
+function Get-SettingGroups {
+    param(
+        [Parameter(Mandatory)] $Setting,
+        [Parameter(Mandatory)][string] $PropertyName
+    )
+
+    $property = $Setting.PSObject.Properties[$PropertyName]
+    if ($null -eq $property -or $null -eq $property.Value) { return @() }
+    return @($property.Value)
+}
+
+function Test-SettingConfigured {
+    param(
+        [Parameter(Mandatory)] $Setting,
+        [string] $ExpectedGroupId,
+        [switch] $ExpectWholeTenant
+    )
+
+    if (-not $Setting.enabled) { return $false }
+
+    $enabledGroups = @(Get-SettingGroups -Setting $Setting -PropertyName 'enabledSecurityGroups')
+    $excludedGroups = @(Get-SettingGroups -Setting $Setting -PropertyName 'excludedSecurityGroups')
+
+    if ($ExpectWholeTenant -or -not $Setting.canSpecifySecurityGroups) {
+        return $enabledGroups.Count -eq 0 -and $excludedGroups.Count -eq 0
+    }
+
+    $isEnabled = @($enabledGroups | Where-Object { $_.graphId -eq $ExpectedGroupId }).Count -gt 0
+    $isExcluded = @($excludedGroups | Where-Object { $_.graphId -eq $ExpectedGroupId }).Count -gt 0
+    return $isEnabled -and -not $isExcluded
+}
+
 # --------------------------------------------------------------------------
 # 3. Find the relevant settings from the live list
 # --------------------------------------------------------------------------
 $all = Get-Settings
 
-$patterns = @('git')
-if ($IncludeServicePrincipal) { $patterns += 'serviceprincipal', 'service principal' }
-
-$targets = $all | Where-Object {
-    $name = "$($_.settingName) $($_.title)"
-    $patterns | Where-Object { $name -match $_ }
+$requiredSettingNames = @(
+    'GitIntegrationTenantSwitch'
+    'GitHubTenantSettings'
+)
+if ($IncludeServicePrincipal) {
+    $requiredSettingNames += @(
+        'ServicePrincipalAccessGlobalAPIs'
+        'ServicePrincipalAccessPermissionAPIs'
+    )
 }
 
-if (-not $targets) { throw 'No Git-related tenant settings found. The account may lack Fabric admin rights.' }
+$settingsByName = @{}
+foreach ($setting in $all) {
+    $settingsByName[$setting.settingName] = $setting
+}
 
-Write-Host "Matching tenant settings:"
-$targets | Select-Object settingName, title, enabled, canSpecifySecurityGroups | Format-Table -AutoSize
+$missingSettings = @($requiredSettingNames | Where-Object { -not $settingsByName.ContainsKey($_) })
+if ($missingSettings.Count -gt 0) {
+    throw "Required Fabric tenant settings were not returned: $($missingSettings -join ', '). The account may lack Fabric admin rights."
+}
+
+$targets = @($requiredSettingNames | ForEach-Object { $settingsByName[$_] })
+
+Write-Host 'Required tenant settings:'
+$targets | Select-Object settingName, title, enabled, canSpecifySecurityGroups, `
+    @{ Name = 'EnabledGroups'; Expression = { @(Get-SettingGroups -Setting $_ -PropertyName 'enabledSecurityGroups').Count } } | `
+    Format-Table -AutoSize
 
 if ($List) { return }
 
@@ -156,17 +207,43 @@ $groupId = $null
 if (-not $WholeTenant) {
     $groupId = az ad group list --display-name $SecurityGroup --query '[0].id' -o tsv
     if (-not $groupId) { throw "Security group '$SecurityGroup' not found. Pass -WholeTenant to apply tenant-wide instead." }
+
+    if ($PrincipalObjectId) {
+        $isMember = az ad group member check --group $groupId --member-id $PrincipalObjectId --query value -o tsv
+        if ($LASTEXITCODE -ne 0 -or $isMember -ne 'true') {
+            throw "Principal '$PrincipalObjectId' is not a direct member of '$SecurityGroup'; scoped Fabric settings would not apply to it."
+        }
+    }
 }
 
 $changed = 0
-foreach ($setting in ($targets | Where-Object { -not $_.enabled })) {
+foreach ($setting in $targets) {
+    if (Test-SettingConfigured -Setting $setting -ExpectedGroupId $groupId -ExpectWholeTenant:$WholeTenant) {
+        continue
+    }
+
     if (-not $PSCmdlet.ShouldProcess("$($setting.settingName) ($($setting.title))", 'Enable tenant setting')) { continue }
 
     $body = @{ enabled = $true }
     # Not every setting supports group scoping; sending groups to one that does
     # not is rejected.
     if ($groupId -and $setting.canSpecifySecurityGroups) {
-        $body.enabledSecurityGroups = @(@{ graphId = $groupId; name = $SecurityGroup })
+        $enabledGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'enabledSecurityGroups')
+        if (-not ($enabledGroups | Where-Object { $_.graphId -eq $groupId })) {
+            $enabledGroups += [pscustomobject]@{ graphId = $groupId; name = $SecurityGroup }
+        }
+
+        $body.enabledSecurityGroups = @($enabledGroups | ForEach-Object {
+                @{ graphId = $_.graphId; name = $_.name }
+            })
+        $body.excludedSecurityGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'excludedSecurityGroups' | `
+                Where-Object { $_.graphId -ne $groupId } | ForEach-Object {
+                @{ graphId = $_.graphId; name = $_.name }
+            })
+    }
+    elseif ($setting.canSpecifySecurityGroups) {
+        $body.enabledSecurityGroups = @()
+        $body.excludedSecurityGroups = @()
     }
 
     try {
@@ -177,12 +254,25 @@ foreach ($setting in ($targets | Where-Object { -not $_.enabled })) {
         $changed++
     }
     catch {
-        Write-Warning "  could not enable $($setting.settingName): $($_.Exception.Message)"
+        throw "Could not configure $($setting.settingName): $($_.Exception.Message)"
+    }
+}
+
+if (-not $WhatIfPreference) {
+    $verifiedSettings = Get-Settings
+    $verificationFailures = foreach ($settingName in $requiredSettingNames) {
+        $setting = $verifiedSettings | Where-Object { $_.settingName -eq $settingName } | Select-Object -First 1
+        if (-not $setting -or -not (Test-SettingConfigured -Setting $setting -ExpectedGroupId $groupId -ExpectWholeTenant:$WholeTenant)) {
+            $settingName
+        }
+    }
+    if ($verificationFailures) {
+        throw "Fabric did not report the required tenant-setting state after update: $($verificationFailures -join ', ')."
     }
 }
 
 if ($changed -eq 0) {
-    Write-Host 'Nothing to change; all matching settings were already enabled.'
+    Write-Host 'Nothing to change; all required settings already have the requested scope.'
 }
 else {
     Write-Host ''

@@ -208,7 +208,10 @@ jobs:
       - name: Enable Fabric tenant settings
         if: inputs.configure_tenant_settings
         shell: pwsh
-        run: ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal
+        run: |
+          ./scripts/Enable-FabricGitIntegration.ps1 `
+              -IncludeServicePrincipal `
+              -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
 
       - name: Wait for Fabric settings propagation
         if: inputs.configure_tenant_settings && inputs.propagation_wait_seconds != '0'
