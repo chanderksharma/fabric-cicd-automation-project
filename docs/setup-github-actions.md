@@ -366,7 +366,7 @@ Destroying the shared Entra groups invalidates every reference Fabric holds,
 because Fabric stores a group's object ID rather than its name. A rebuilt group is
 a new object, so repeat steps 4 and 5 above:
 
-1. Re-add yourself and your colleagues to the recreated groups.
+1. Re-add yourself and your colleagues to the recreated groups with `./scripts/Add-MeToFabricGroups.ps1`.
 2. Re-run `Enable-FabricGitIntegration.ps1`, which drops the dead group references and rewrites the current ones.
 
 Skipping either leaves Terraform failing with `Unauthorized` when the Fabric
@@ -437,7 +437,7 @@ If bootstrap ran with a `workspace_prefix`, substitute it: `my-contoso-dev` and 
 | `Unauthorized` on `fabric_connection` during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run [step 5](#5-enable-the-fabric-tenant-settings-manual), which drops the stale references |
 | `Insufficient privileges to complete the operation` from `az` | Your directory role is read-only. Activate Global Administrator or the narrower role in Privileged Identity Management |
 | `/me request is only valid with delegated authentication flow` | A service principal cannot resolve a user. Pass an object ID rather than a UPN |
-| Workspaces exist but you cannot see them | You are not in one of the three security groups. Run [step 4](#4-assign-users-to-the-fabric-workspaces-manual) |
+| Workspaces exist but you cannot see them | You are not in one of the three security groups. Run `./scripts/Add-MeToFabricGroups.ps1`, then allow a few minutes for Fabric to notice. See [step 4](#4-assign-users-to-the-fabric-workspaces-manual) |
 | Git integration absent on prod only | Expected. Platform admins hold Viewer on prod, and the source-control panel is admin-only. Verify through the admin portal or the REST API |
 | `Fabric Capacity State` on test or prod | Capacity paused. `az fabric capacity resume`. Dev passes because `skip_capacity_state_validation = true` |
 | `WorkspaceAlreadyConnectedToGit` | A previous failed run left the connection. Disconnect via the API, then re-run |

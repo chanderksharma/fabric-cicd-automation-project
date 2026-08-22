@@ -146,6 +146,8 @@ Both roots read these through `azuread_group` data sources, so `plan` fails with
 
 Terraform reads them but never creates them, so membership stays under identity governance. For a sandbox, `scripts/bootstrap.ps1 -CreateGroups` creates any that are missing and adds you to the admin group.
 
+Workspace roles are granted to these groups and never to individuals, so a person sees nothing until they join one. `scripts/Add-MeToFabricGroups.ps1` adds the signed-in user, checking membership first so it is safe to re-run. It has to be repeated after a rebuild: Fabric stores the group's object ID, and a recreated group is a new object.
+
 ## Getting started
 
 Choose one operating lane. For the GitHub Actions lane, configure the federated bootstrap service principal variables and two GitHub secrets, then dispatch `.github/workflows/bootstrap.yml`. It creates state, permanent OIDC trust, the items repository, environments and the first deployment. See [setup with GitHub Actions](docs/setup-github-actions.md).
@@ -178,6 +180,9 @@ cd infra\platform; terraform init -reconfigure -backend-config="platform.backend
 
 # Platform again, now that the workspaces exist, to create the pipeline
 cd infra\platform; terraform apply; cd ..\..
+
+# Join the groups Terraform granted the workspace roles to
+./scripts/Add-MeToFabricGroups.ps1
 ```
 
 Follow the guide for your lane rather than this summary: [manual](docs/setup-manual-cli.md), [GitHub Actions](docs/setup-github-actions.md).
