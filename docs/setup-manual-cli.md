@@ -276,6 +276,12 @@ Dot-source it. Running it normally sets variables in a child scope that disappea
 
 ## Step 4: Apply the platform
 
+**Prerequisite:** [Step 2](#step-2-enable-fabric-tenant-settings) must have
+completed and propagated. Terraform cannot create the GitHub connection while
+Fabric still blocks service principals and Git sync, and the failure surfaces as
+`InsufficientScopes` or `Unauthorized` rather than as anything about tenant
+settings.
+
 The defaults in `infra/platform/terraform.tfvars` cover the common case. Change the prefix, region or capacity topology there if you need to, then:
 
 ```powershell

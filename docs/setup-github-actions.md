@@ -135,6 +135,7 @@ permission to any application, which is a large privilege for a CI credential.
 | Requirement | Notes |
 |-------------|-------|
 | Administrator on this repository | Needed to dispatch workflows and set variables |
+| A self-hosted Windows x64 runner | Every job declares `runs-on: [self-hosted, Windows, X64]`. Without one registered and online, runs queue indefinitely rather than failing |
 | A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers |
 | An items repository | Holds the Fabric item definitions. Bootstrap creates it and one branch per workspace if missing |
 | `BOOTSTRAP_GITHUB_TOKEN` | Temporary. Repository administration, Actions and Environments read/write |
@@ -145,6 +146,13 @@ permission to any application, which is a large privilege for a CI credential.
 You need the **Fabric Administrator** role, or Power BI Administrator, or Global
 Administrator. Tenant settings cannot be changed by a service principal, so this
 role belongs to a person and the step stays manual.
+
+Running `scripts/Enable-FabricGitIntegration.ps1` is a prerequisite of
+`terraform-apply`, not an optional extra: Fabric blocks service principals and
+GitHub sync by default, so the apply cannot succeed before it. Bootstrap
+dispatches the apply automatically unless you clear `trigger_apply`, so either
+clear it and run the script first, or expect that first apply to fail and
+re-dispatch it afterwards.
 
 ### The fabric-admin-cli application
 
@@ -328,6 +336,12 @@ updates.
 Allow up to 15 minutes for the change to propagate before running Terraform.
 
 ### 6. Apply the infrastructure (GitHub workflow)
+
+**Prerequisite:** step 5 must have completed and propagated. `terraform-apply`
+fails at the Fabric provider with `InsufficientScopes` or `Unauthorized` while
+service principals are still blocked from the Fabric API, and no amount of
+re-running the workflow fixes it. If bootstrap dispatched the apply for you and
+it failed this way, run step 5 and dispatch it again.
 
 If you cleared `trigger_apply`, dispatch **terraform-apply** manually. Approve the
 protected `platform`, `test` and `prod` environments when prompted.

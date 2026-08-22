@@ -148,6 +148,11 @@ Terraform reads them but never creates them, so membership stays under identity 
 
 Choose one operating lane. For the GitHub Actions lane, configure the federated bootstrap service principal variables and two GitHub secrets, then dispatch `.github/workflows/bootstrap.yml`. It creates state, permanent OIDC trust, the items repository, environments and the first deployment. See [setup with GitHub Actions](docs/setup-github-actions.md).
 
+Either lane must run `scripts/Enable-FabricGitIntegration.ps1` before the first
+Terraform apply. Fabric blocks service principals and GitHub sync by default, and
+only a signed-in administrator can lift that, so no workflow and no service
+principal can do it for you.
+
 The manual lane uses two scripts because they have different lifetimes:
 
 ```powershell
