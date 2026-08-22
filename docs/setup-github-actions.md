@@ -137,7 +137,7 @@ permission to any application, which is a large privilege for a CI credential.
 | Administrator on this repository | Needed to dispatch workflows and set variables |
 | A self-hosted Windows x64 runner | Every job declares `runs-on: [self-hosted, Windows, X64]`. Without one registered and online, runs queue indefinitely rather than failing |
 | A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers |
-| An items repository | Holds the Fabric item definitions. Bootstrap creates it and one branch per workspace if missing |
+| An items repository | Holds the Fabric item definitions. Bootstrap creates it and one branch per workspace if missing. `items_owner` sets who owns it, defaulting to a different account than this repository |
 | `BOOTSTRAP_GITHUB_TOKEN` | Temporary. Repository administration, Actions and Environments read/write |
 | `FABRIC_GITHUB_PAT` | Permanent. Fine-grained token with Contents read/write on the items repository |
 
@@ -264,6 +264,12 @@ items repository and environment reviewer. Leave `trigger_apply` off on a first
 build: the apply cannot succeed until step 5 has enabled the Fabric tenant
 settings, and bootstrap has no way to do that for you. Turning it on is a
 convenience for a rebuild, where the settings already exist.
+
+`items_owner` is the GitHub account or organisation that owns the items
+repository. It does not have to be the owner of this repository, and often is
+not. Clear it to fall back to this repository's owner. Only the owner is
+configurable, not the host: Fabric's GitHub source control connection is
+github.com only, so a GitHub Enterprise Server URL cannot be used.
 
 `workspace_prefix` is optional and names the estate. Enter `my-contoso` and the
 workspaces become `my-contoso-dev`, `my-contoso-test` and `my-contoso-prod`, each

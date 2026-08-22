@@ -27,6 +27,11 @@ on:
         required: true
         default: fabric-workspace-items
         type: string
+      items_owner:
+        description: Owner of the items repository. Blank uses the owner of this repository
+        required: false
+        default: chandsharma_microsoft
+        type: string
       workspace_prefix:
         description: 'Names the workspaces and their branches, e.g. my-contoso gives my-contoso-dev. Empty uses contoso-fab-gh-<environment>'
         required: false
@@ -63,6 +68,7 @@ env:
   INPUT_STATE_RESOURCE_GROUP: ${{ inputs.state_resource_group }}
   INPUT_LOCATION: ${{ inputs.location }}
   INPUT_ITEMS_REPOSITORY: ${{ inputs.items_repository }}
+  INPUT_ITEMS_OWNER: ${{ inputs.items_owner }}
   INPUT_WORKSPACE_PREFIX: ${{ inputs.workspace_prefix }}
   INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
 
@@ -123,9 +129,14 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          $owner = $env:GITHUB_REPOSITORY_OWNER
+          # The items repository need not sit beside this one. Only the owner is
+          # configurable, not the host: Fabric's GitHub connection is github.com
+          # only, so a GitHub Enterprise Server URL would not connect.
+          $owner = if ($env:INPUT_ITEMS_OWNER) { $env:INPUT_ITEMS_OWNER } else { $env:GITHUB_REPOSITORY_OWNER }
           $name = $env:INPUT_ITEMS_REPOSITORY
           $repo = "$owner/$name"
+          "ITEMS_OWNER=$owner" >> $env:GITHUB_ENV
+          Write-Host "Items repository: $repo"
 
           gh api "repos/$repo" --silent 2>$null
           if ($LASTEXITCODE -ne 0) {
@@ -261,7 +272,7 @@ jobs:
               AZURE_TENANT_ID = $env:AZURE_TENANT_ID
               AZURE_SUBSCRIPTION_ID = $env:AZURE_SUBSCRIPTION_ID
               FABRIC_CICD_SP_OBJECT_ID = $env:DEPLOYMENT_OBJECT_ID
-              FABRIC_ITEMS_OWNER = $env:GITHUB_REPOSITORY_OWNER
+              FABRIC_ITEMS_OWNER = $env:ITEMS_OWNER
               FABRIC_ITEMS_REPOSITORY = $env:INPUT_ITEMS_REPOSITORY
               FABRIC_WORKSPACE_PREFIX = $env:INPUT_WORKSPACE_PREFIX
               FABRIC_ADMIN_GROUP_ID = $env:FABRIC_ADMIN_GROUP_ID
