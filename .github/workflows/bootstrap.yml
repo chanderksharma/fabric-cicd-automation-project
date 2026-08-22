@@ -206,6 +206,7 @@ jobs:
           "DEPLOYMENT_OBJECT_ID=$objectId" >> $env:GITHUB_ENV
 
       - name: Enable Fabric tenant settings
+        id: tenant_settings
         if: inputs.configure_tenant_settings
         shell: pwsh
         run: |
@@ -213,8 +214,9 @@ jobs:
               -IncludeServicePrincipal `
               -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
 
+      # Nothing propagates when nothing changed, and a re-run usually changes nothing.
       - name: Wait for Fabric settings propagation
-        if: inputs.configure_tenant_settings && inputs.propagation_wait_seconds != '0'
+        if: inputs.configure_tenant_settings && inputs.propagation_wait_seconds != '0' && steps.tenant_settings.outputs.changed != '0'
         shell: pwsh
         run: |
           $seconds = 0

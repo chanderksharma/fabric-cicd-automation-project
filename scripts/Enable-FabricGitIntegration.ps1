@@ -413,13 +413,17 @@ if (-not $WhatIfPreference) {
     }
 }
 
+# Lets the caller skip a propagation wait that has nothing to wait for.
+if ($env:GITHUB_OUTPUT) {
+    "changed=$changed" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+}
+
 if ($WhatIfPreference) {
     Write-Host 'Dry run. Nothing was changed.'
 }
 elseif ($changed -eq 0) {
     Write-Host 'Nothing to change; all required settings already have the requested scope.'
-}
-else {
+}else {
     Write-Host ''
     Write-Host "Changed $changed setting(s). Allow up to 15 minutes for propagation, then:"
     Write-Host '  ./scripts/Apply-Workspaces.ps1'
