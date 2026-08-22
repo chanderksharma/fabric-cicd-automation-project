@@ -194,11 +194,7 @@ if (-not $accessToken) {
     if (-not $accessToken) { throw 'Device code expired before sign-in completed.' }
 }
 
-$headers = @{
-    Authorization       = "Bearer $accessToken"
-    'Content-Type'      = 'application/json'
-    'x-ms-fabric-skill' = 'git-integration-operations-cli'
-}
+$headers = @{ Authorization = "Bearer $accessToken" }
 
 function Get-Settings {
     (Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers $headers).tenantSettings
@@ -382,7 +378,7 @@ foreach ($setting in $targets) {
 
     try {
         Invoke-RestMethod -Method Post -Uri "$AdminRoot/$($setting.settingName)/update" `
-            -Headers $headers -Body ($body | ConvertTo-Json -Depth 6) | Out-Null
+            -Headers $headers -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 6) | Out-Null
         $scopeText = if ($body.ContainsKey('enabledSecurityGroups')) { "scoped to $SecurityGroup" } else { 'tenant-wide' }
         Write-Host "  enabled $($setting.settingName) ($scopeText)"
         $changed++
