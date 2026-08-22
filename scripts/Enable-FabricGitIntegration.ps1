@@ -20,8 +20,10 @@
     APIs. These settings are tenant-wide, so they are scoped to a group by
     default rather than the whole organisation.
 
-    The first run in a tenant has to be interactive: it is this script that
-    enables the settings a service principal needs to reach the admin API.
+    The first run in a tenant has to be interactive. A service principal reaches
+    the admin API only after an administrator enables the two admin API service
+    principal settings in the admin portal, which this script does not manage:
+    they grant tenant-wide metadata access and are a deliberate decision.
 
 .EXAMPLE
     ./scripts/Enable-FabricGitIntegration.ps1
@@ -33,6 +35,13 @@
     ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -WhatIf
 
 .EXAMPLE
+    # Grant CI unattended access. Run once, interactively, as a Fabric admin.
+    ./scripts/Enable-FabricGitIntegration.ps1 `
+        -IncludeServicePrincipal `
+        -IncludeAdminApiAccess `
+        -PrincipalObjectId <deployment-sp-object-id>, <bootstrap-sp-object-id>
+
+.EXAMPLE
     # Unattended, once a service principal is allowed to call the admin API.
     ./scripts/Enable-FabricGitIntegration.ps1 -Auth ServicePrincipal -IncludeServicePrincipal
 #>
@@ -40,13 +49,19 @@
 param(
     [string] $SecurityGroup = 'sg-fabric-platform-admins',
 
-    # Optional principal whose membership in SecurityGroup must be verified.
-    # Bootstrap passes the permanent deployment service principal here.
-    [string] $PrincipalObjectId,
+    # Optional principals whose membership in SecurityGroup must be verified.
+    # Bootstrap passes the permanent deployment service principal here; add the
+    # bootstrap principal too when granting admin API access.
+    [string[]] $PrincipalObjectId = @(),
 
     # Also enable the settings that let a service principal call Fabric APIs,
     # which CI needs.
     [switch] $IncludeServicePrincipal,
+
+    # Also enable the two admin API switches, without which a service principal
+    # cannot run this script unattended. They grant the allowed group tenant-wide
+    # metadata access, so opt in deliberately.
+    [switch] $IncludeAdminApiAccess,
 
     # Show the matching settings and their state, change nothing.
     [switch] $List,
@@ -103,7 +118,7 @@ if ($Auth -ne 'DeviceCode') {
         Write-Host 'Using the signed-in identity; the admin API accepted its token.'
     }
     elseif ($Auth -eq 'ServicePrincipal') {
-        throw "The signed-in identity cannot reach $AdminRoot. It needs 'Service principals can use Fabric APIs' and the admin API update setting enabled for a security group it belongs to."
+        throw "The signed-in identity cannot reach $AdminRoot. A Fabric administrator has to enable 'Service principals can access read-only admin APIs' and 'Service principals can access admin APIs used for updates' for a security group this identity belongs to. Those switches are not among the settings this script manages."
     }
     else {
         Write-Host 'The signed-in identity cannot reach the admin API; falling back to device code.'
@@ -113,7 +128,7 @@ if ($Auth -ne 'DeviceCode') {
 if (-not $accessToken) {
     # Device code needs a human; CI would otherwise wait here until it expired.
     if ($env:CI -or $env:TF_IN_AUTOMATION) {
-        throw 'Device code sign-in cannot run unattended. Run this script interactively once to enable the settings, then re-run here with -Auth ServicePrincipal.'
+        throw 'Device code sign-in cannot run unattended. Run this script from a workstation as a Fabric administrator, or re-run the workflow with configure_tenant_settings disabled. Unattended runs additionally need a Fabric administrator to enable the two admin API service principal settings in the admin portal; this script does not manage those.'
     }
 
     # ----------------------------------------------------------------------
@@ -212,6 +227,38 @@ function Get-SettingGroups {
     return @($property.Value)
 }
 
+# A destroyed and rebuilt security group keeps its name but not its id, and Fabric
+# holds the old one until something rewrites the setting. Re-sending a dead id
+# fails the whole update with a bare BadRequest.
+$script:GroupExists = @{}
+function Test-GroupExists {
+    param([Parameter(Mandatory)][string] $GraphId)
+
+    if (-not $script:GroupExists.ContainsKey($GraphId)) {
+        & az ad group show --group $GraphId --query id -o tsv *>&1 | Out-Null
+        $script:GroupExists[$GraphId] = $LASTEXITCODE -eq 0
+        $global:LASTEXITCODE = 0
+    }
+    return $script:GroupExists[$GraphId]
+}
+
+function Select-LiveGroups {
+    param(
+        [Parameter(Mandatory)] $Setting,
+        [Parameter(Mandatory)][string] $PropertyName
+    )
+
+    $kept = @()
+    foreach ($group in Get-SettingGroups -Setting $Setting -PropertyName $PropertyName) {
+        if (Test-GroupExists -GraphId $group.graphId) {
+            $kept += $group
+            continue
+        }
+        Write-Host "    dropping '$($group.name)' ($($group.graphId)) from $($Setting.settingName): that group no longer exists" -ForegroundColor Yellow
+    }
+    return @($kept)
+}
+
 function Test-SettingConfigured {
     param(
         [Parameter(Mandatory)] $Setting,
@@ -249,6 +296,23 @@ if ($IncludeServicePrincipal) {
     )
 }
 
+# These two are matched on title: their API names are not documented, and
+# guessing one would silently enable the wrong tenant-wide switch.
+if ($IncludeAdminApiAccess) {
+    foreach ($title in @(
+            'Service principals can access read-only admin APIs'
+            'Service principals can access admin APIs used for updates'
+        )) {
+        $matched = @($all | Where-Object {
+                $_.PSObject.Properties.Name -contains 'title' -and $_.title -eq $title
+            })
+        if ($matched.Count -ne 1) {
+            throw "Expected exactly one tenant setting titled '$title', found $($matched.Count). Enable it in the Fabric admin portal instead."
+        }
+        $requiredSettingNames += $matched[0].settingName
+    }
+}
+
 $settingsByName = @{}
 foreach ($setting in $all) {
     $settingsByName[$setting.settingName] = $setting
@@ -279,10 +343,10 @@ if (-not $WholeTenant) {
     $groupId = az ad group list --display-name $SecurityGroup --query '[0].id' -o tsv
     if (-not $groupId) { throw "Security group '$SecurityGroup' not found. Pass -WholeTenant to apply tenant-wide instead." }
 
-    if ($PrincipalObjectId) {
-        $isMember = az ad group member check --group $groupId --member-id $PrincipalObjectId --query value -o tsv
+    foreach ($principal in $PrincipalObjectId) {
+        $isMember = az ad group member check --group $groupId --member-id $principal --query value -o tsv
         if ($LASTEXITCODE -ne 0 -or $isMember -ne 'true') {
-            throw "Principal '$PrincipalObjectId' is not a direct member of '$SecurityGroup'; scoped Fabric settings would not apply to it."
+            throw "Principal '$principal' is not a direct member of '$SecurityGroup'; scoped Fabric settings would not apply to it."
         }
     }
 }
@@ -299,7 +363,7 @@ foreach ($setting in $targets) {
     # Not every setting supports group scoping; sending groups to one that does
     # not is rejected.
     if ($groupId -and $setting.canSpecifySecurityGroups) {
-        $enabledGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'enabledSecurityGroups')
+        $enabledGroups = @(Select-LiveGroups -Setting $setting -PropertyName 'enabledSecurityGroups')
         if (-not ($enabledGroups | Where-Object { $_.graphId -eq $groupId })) {
             $enabledGroups += [pscustomobject]@{ graphId = $groupId; name = $SecurityGroup }
         }
@@ -307,7 +371,7 @@ foreach ($setting in $targets) {
         $body.enabledSecurityGroups = @($enabledGroups | ForEach-Object {
                 @{ graphId = $_.graphId; name = $_.name }
             })
-        $excludedGroups = @(Get-SettingGroups -Setting $setting -PropertyName 'excludedSecurityGroups' | `
+        $excludedGroups = @(Select-LiveGroups -Setting $setting -PropertyName 'excludedSecurityGroups' | `
                 Where-Object { $_.graphId -ne $groupId } | ForEach-Object {
                 @{ graphId = $_.graphId; name = $_.name }
             })
@@ -349,7 +413,10 @@ if (-not $WhatIfPreference) {
     }
 }
 
-if ($changed -eq 0) {
+if ($WhatIfPreference) {
+    Write-Host 'Dry run. Nothing was changed.'
+}
+elseif ($changed -eq 0) {
     Write-Host 'Nothing to change; all required settings already have the requested scope.'
 }
 else {
