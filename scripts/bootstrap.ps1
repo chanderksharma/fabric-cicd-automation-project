@@ -204,25 +204,43 @@ elseif (-not $groupsOk) {
 if ($PlatformAdminMembers.Count -gt 0 -and $groupsOk) {
     $adminOid = az ad group list --display-name $AdminGroup --query '[0].id' -o tsv
     foreach ($member in $PlatformAdminMembers) {
+        $lookupError = $null
         $memberOid = if ($member -match '^[0-9a-fA-F-]{36}$') {
             $member
         }
         else {
-            $found = az ad user show --id $member --query id -o tsv 2>$null
-            if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $found = $null }
+            $found = $null
+            $output = & az ad user show --id $member --query id -o tsv 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $found = "$(@($output | Where-Object { $_ -is [string] }) | Select-Object -Last 1)".Trim()
+            }
+            else {
+                $global:LASTEXITCODE = 0
+                $lookupError = ($output | Out-String).Trim()
+            }
 
             # A sign-in address is not always the userPrincipalName, and
             # az ad user show accepts only the UPN or the object ID.
             if (-not $found) {
                 $escaped = $member.Replace("'", "''")
-                $found = az ad user list --filter "userPrincipalName eq '$escaped' or mail eq '$escaped'" --query '[0].id' -o tsv 2>$null
-                if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $found = $null }
+                $output = & az ad user list --filter "userPrincipalName eq '$escaped' or mail eq '$escaped'" --query '[0].id' -o tsv 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $found = "$(@($output | Where-Object { $_ -is [string] }) | Select-Object -Last 1)".Trim()
+                }
+                else {
+                    $global:LASTEXITCODE = 0
+                    $lookupError = ($output | Out-String).Trim()
+                }
             }
             $found
         }
 
         if (-not $memberOid) {
-            throw "Could not resolve '$member' to a user by userPrincipalName or mail. Pass the exact UPN, or the object ID."
+            throw @"
+Could not resolve '$member' to a user. $lookupError
+Reading users needs Microsoft Graph User.Read.All or Directory.Read.All on the
+identity running this script. Pass the object ID instead to skip the lookup.
+"@
         }
 
         $isMember = az ad group member check --group $adminOid --member-id $memberOid --query value -o tsv 2>$null
