@@ -2,14 +2,14 @@
 title: Setup with GitHub Actions
 description: Bootstrap and operate the Microsoft Fabric platform through GitHub Actions using federated Azure service principals and GitHub OIDC.
 author: Fabric Platform Team
-ms.date: 2026-08-20
+ms.date: 2026-08-22
 ms.topic: how-to
 keywords:
   - microsoft fabric
   - terraform
   - github actions
   - oidc
-estimated_reading_time: 18
+estimated_reading_time: 25
 ---
 
 ## Who this is for
@@ -31,6 +31,83 @@ The automated lane uses a pre-authorized Azure service principal as its trust ro
 | State network access                 | Operator IP allowlist  | Current runner IP rule    |
 
 No Terraform or Azure CLI command runs on your workstation in this path.
+
+## Prerequisites
+
+Work through these before dispatching any workflow. Each one has blocked a real run.
+
+### Azure subscription
+
+| Requirement | Why |
+|-------------|-----|
+| An Azure subscription you can assign roles in | Bootstrap creates a resource group, a storage account, a network security perimeter and a Fabric capacity |
+| Non-zero Fabric capacity-unit quota in the target region | Quota defaults to zero. `centralus` is the working region here; verify before changing it |
+| Owner on that subscription for the bootstrap service principal | It creates resource groups and assigns roles |
+
+Check quota before anything else, because a missing quota fails late:
+
+```powershell
+az rest --method GET --url "https://management.azure.com/subscriptions/<sub>/providers/Microsoft.Fabric/locations/<region>/usages?api-version=2023-11-01"
+```
+
+### Your own account
+
+You need a directory role with write access. **Global Reader is not enough**, and it
+is a common default: it can read everything, so diagnostics succeed and only the
+writes fail. Activate the role in Privileged Identity Management before you start,
+and remember the activation expires.
+
+| Task | Minimum role |
+|------|--------------|
+| Grant admin consent for Graph permissions | Privileged Role Administrator or Global Administrator |
+| Add members to the security groups | Groups Administrator, User Administrator or Global Administrator |
+| Change Fabric tenant settings | Fabric Administrator, Power BI Administrator or Global Administrator |
+
+Confirm what is actually active, rather than what you are eligible for:
+
+```powershell
+az rest --method GET `
+    --url "https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole" `
+    --query "value[].displayName" -o json
+```
+
+### Bootstrap service principal
+
+A repository cannot authorize its own first identity, so create this one by hand.
+It is used only by `bootstrap.yml`.
+
+1. Register an application in Entra ID and note its client ID.
+2. Grant these Microsoft Graph **application** permissions and consent to them:
+
+   | Permission | Used for |
+   |------------|----------|
+   | `Application.ReadWrite.All` | Creating the permanent deployment application |
+   | `Group.ReadWrite.All` | Creating the three security groups and managing membership |
+   | `DelegatedPermissionGrant.ReadWrite.All` | Consenting the deployment application |
+
+3. Assign it **Owner** on the target subscription.
+4. Add the federated credential described under [Trust boundary](#trust-boundary).
+
+`AppRoleAssignment.ReadWrite.All` is optional and best left off. Bootstrap uses it
+when present to grant the deployment application `Directory.Read.All`; nothing
+depends on that succeeding. It also lets its holder assign any application
+permission to any application, which is a large privilege for a CI credential.
+
+### GitHub
+
+| Requirement | Notes |
+|-------------|-------|
+| Administrator on this repository | Needed to dispatch workflows and set variables |
+| A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers |
+| An items repository | Holds the Fabric item definitions. Bootstrap creates it and the `gh-dev`, `gh-test` and `gh-prod` branches if missing |
+| `BOOTSTRAP_GITHUB_TOKEN` | Temporary. Repository administration, Actions and Environments read/write |
+| `FABRIC_GITHUB_PAT` | Permanent. Fine-grained token with Contents read/write on the items repository |
+
+### Fabric
+
+You need the **Fabric Administrator** role, or Power BI Administrator, or Global
+Administrator. Tenant settings cannot be changed by a service principal, so this
+role belongs to a person and the step stays manual.
 
 ## Trust boundary
 
@@ -76,71 +153,106 @@ subject: repo:<owner>@<owner-id>/<repository>@<repository-id>:ref:refs/heads/mai
 
 The workflow reads `GITHUB_REPOSITORY_OWNER_ID` and `GITHUB_REPOSITORY_ID` automatically and uses the same immutable format for the permanent deployment credentials. Run `bootstrap.yml` from `main`, because the federated subject must match exactly. Neither Azure service principal has a client secret. Revoke the bootstrap application's repository federated credential after bootstrap if the elevated bootstrap path should not remain available.
 
+The permanent deployment application needs no Microsoft Graph permission. Bootstrap resolves the three security groups and publishes their object IDs as repository variables, which the Terraform workflows pass in as inputs. Terraform falls back to looking the groups up by display name only when those variables are absent, and that path does require `Directory.Read.All`.
+
 ### Fabric administrator authorization
 
-Fabric tenant-setting administration requires a delegated `Tenant.ReadWrite.All` token. Application credentials cannot remove this delegated consent boundary. When `configure_tenant_settings` is selected, monitor the **Enable Fabric tenant settings** step, open the displayed device-login URL and authorize it as a Global, Fabric or Power BI Administrator.
-
-This is the only interactive action. If the required Git and service-principal tenant settings are already enabled, clear `configure_tenant_settings` and the bootstrap is unattended.
+Fabric tenant-setting administration requires a delegated `Tenant.ReadWrite.All` token, and application credentials cannot remove that boundary. A service principal is refused even when the admin API tenant settings are enabled for it, so the workflows do not attempt it and the step is manual. See [step 5](#5-enable-the-fabric-tenant-settings).
 
 ### GitHub plan requirements
 
 The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it.
 
-## Grant yourself workspace access
+## Run the platform end to end
 
-This is a manual step. Terraform assigns workspace roles to the three security
-groups and never to individuals, so nobody sees the workspaces until they are a
-member of one. Bootstrap adds the identity it runs as, not you.
+The order matters. Steps 4 and 5 are manual and cannot be automated, because only
+a signed-in administrator can perform them.
 
-```powershell
-az ad group member add `
-    --group (az ad group list --display-name sg-fabric-platform-admins --query '[0].id' -o tsv) `
-    --member-id (az ad signed-in-user show --query id -o tsv)
-```
+### 1. Prepare the repository
 
-That grants Admin on dev and test, and Viewer on prod. Writing group membership
-needs a directory role such as Groups Administrator; Global Reader is not enough.
+1. Merge [bootstrap.yml](../.github/workflows/bootstrap.yml) into the default branch. The federated subject pins the credential to `main`, so bootstrap must run from there.
+2. Under **Settings > Secrets and variables > Actions**, add the three `AZURE_BOOTSTRAP_*` variables and the two secrets.
 
-Repeat it whenever the groups are recreated, because a rebuilt group is a new
-object and membership does not carry over.
+### 2. Activate your directory role
 
-## Enable the Fabric tenant settings
+Activate Global Administrator, or the narrower roles listed under
+[Your own account](#your-own-account), in Privileged Identity Management. Steps 4
+and 5 fail with `Insufficient privileges` without it.
 
-This is a manual step. Fabric's admin API accepts only a signed-in administrator
-here, so the workflow leaves `configure_tenant_settings` off and CI never runs
-it. From a workstation, signed in as a Fabric administrator:
+### 3. Run bootstrap
+
+Open **Actions > bootstrap > Run workflow** and set the state account, region,
+items repository and environment reviewer. Leave `trigger_apply` selected unless
+you want to inspect the results first.
+
+The workflow is idempotent: re-running it adopts existing state, groups,
+applications, repositories, branches, environments and variables.
+
+### 4. Add people to the security groups
+
+Terraform assigns workspace roles to the three groups and never to individuals,
+so nobody sees a workspace until they are a member. Bootstrap adds only the
+identity it runs as.
 
 ```powershell
 az login
+$adminGroup = az ad group list --display-name sg-fabric-platform-admins --query '[0].id' -o tsv
+az ad group member add --group $adminGroup --member-id (az ad signed-in-user show --query id -o tsv)
+```
+
+Add colleagues by object ID, which avoids a directory lookup:
+
+```powershell
+az ad group member add --group $adminGroup --member-id <user-object-id>
+```
+
+| Group | Grants |
+|-------|--------|
+| `sg-fabric-platform-admins` | Admin on dev and test, Viewer on prod |
+| `sg-fabric-data-engineers` | Member on dev, Viewer on test and prod |
+| `sg-fabric-analysts` | Viewer everywhere |
+
+Prod is read-only for humans by design. A break-glass grant belongs in a reviewed
+pull request through `role_overrides`, not a portal click.
+
+### 5. Enable the Fabric tenant settings
+
+```powershell
 ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal
 ```
 
-The script signs in with a device code, finds the Git integration settings in the
-live list and scopes them to `sg-fabric-platform-admins`. Allow up to 15 minutes
-for the change to reach the workspaces.
+The script creates a public-client app registration, signs you in with a device
+code, finds the Git integration settings in the live list and scopes them to
+`sg-fabric-platform-admins`. Use `-List` first to see the current state without
+changing anything, and `-WhatIf` to preview the updates.
 
-Repeat it whenever the security groups are recreated. Fabric stores the group
-object ID, not its name, so a rebuilt group leaves a stale reference behind and
-the settings stop applying. The script drops references to groups that no longer
-exist and rewrites the current ones.
+Allow up to 15 minutes for the change to propagate before running Terraform.
 
-## Run bootstrap
+### 6. Apply the infrastructure
 
-1. Merge [bootstrap.yml](../.github/workflows/bootstrap.yml) into the default branch.
-2. Add the three bootstrap variables and two secrets under **Settings > Secrets and variables > Actions**.
-3. Open **Actions > bootstrap > Run workflow**.
-4. Choose the state account, region, items repository and environment reviewer.
-5. Enable the Fabric tenant settings manually, as described above.
-6. Approve the protected jobs in the dispatched `terraform-apply` run.
-7. Remove `BOOTSTRAP_GITHUB_TOKEN` and revoke the bootstrap federation if it is no longer needed.
+If you cleared `trigger_apply`, dispatch **terraform-apply** manually. Approve the
+protected `platform`, `test` and `prod` environments when prompted.
 
-The workflow is idempotent. Re-running it adopts existing state, groups, applications, repositories, branches, environments and variables.
+### 7. Clean up the bootstrap path
 
-The permanent deployment application needs no Microsoft Graph permission.
-Bootstrap resolves the three security groups and publishes their object IDs as
-repository variables, which the Terraform workflows pass in as inputs. Terraform
-falls back to looking the groups up by display name only when those variables are
-absent, and that path does require `Directory.Read.All`.
+Remove `BOOTSTRAP_GITHUB_TOKEN` and revoke the bootstrap application's federated
+credential once the platform is running. Both exist only to establish trust.
+
+## After a teardown and rebuild
+
+Destroying the shared Entra groups invalidates every reference Fabric holds,
+because Fabric stores a group's object ID rather than its name. A rebuilt group is
+a new object, so repeat steps 4 and 5 above:
+
+1. Re-add yourself and your colleagues to the recreated groups.
+2. Re-run `Enable-FabricGitIntegration.ps1`, which drops the dead group references and rewrites the current ones.
+
+Skipping either leaves Terraform failing with `Unauthorized` when the Fabric
+provider lists connections, because the tenant settings still point at a group
+that no longer exists.
+
+To avoid the whole cycle, leave the three groups out of teardown. They hold no
+Azure resources and are shared with the manual lane.
 
 ## What bootstrap creates
 
@@ -193,7 +305,12 @@ In the Fabric portal, confirm that the `contoso-fab-gh-dev`, `contoso-fab-gh-tes
 | `Repository secret FABRIC_GITHUB_PAT is required` | Create the repository secret with access to the items repository |
 | `AADSTS70021: No matching federated identity record` | The federated credential subject does not match. Check the environment name in the workflow against the credential |
 | `Request contains a property with duplicate values` while adding credentials | Entra has not propagated the previous federated credential write. The bootstrap retries this condition with bounded backoff |
-| `InsufficientScopes` calling Fabric | Tenant settings for service principals are not enabled. Re-run bootstrap with `configure_tenant_settings` selected |
+| `InsufficientScopes` calling Fabric | Tenant settings for service principals are not enabled. Run [step 5](#5-enable-the-fabric-tenant-settings) |
+| `Unauthorized` on `fabric_connection` during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run [step 5](#5-enable-the-fabric-tenant-settings), which drops the stale references |
+| `Insufficient privileges to complete the operation` from `az` | Your directory role is read-only. Activate Global Administrator or the narrower role in Privileged Identity Management |
+| `/me request is only valid with delegated authentication flow` | A service principal cannot resolve a user. Pass an object ID rather than a UPN |
+| Workspaces exist but you cannot see them | You are not in one of the three security groups. Run [step 4](#4-add-people-to-the-security-groups) |
+| Git integration absent on prod only | Expected. Platform admins hold Viewer on prod, and the source-control panel is admin-only. Verify through the admin portal or the REST API |
 | `Fabric Capacity State` on test or prod | Capacity paused. `az fabric capacity resume`. Dev passes because `skip_capacity_state_validation = true` |
 | `WorkspaceAlreadyConnectedToGit` | A previous failed run left the connection. Disconnect via the API, then re-run |
 | Job waits indefinitely | Environment approval pending, or a `concurrency` group is held by an earlier run |
