@@ -289,10 +289,15 @@ $env:TF_VAR_github_pat = '<PAT with Contents read/write on the items repo>'
 
 cd infra\platform
 terraform init -reconfigure -backend-config="platform.backend.hcl"
-terraform apply
+terraform apply -var=create_deployment_pipeline=false
 ```
 
-This creates the resource group, the Fabric capacity, Azure role assignments, the GitHub source control connection and the deployment pipeline, all named `contoso-fab-ml-*`, and writes `platform.tfstate` into the `tfstate-ml` container.
+The override matters on a first build. The deployment pipeline reads the three
+workspaces to assign them to stages, and they do not exist until step 5, so
+leaving it on fails the plan at `data.fabric_workspace.stage` with a workspace
+not found. Step 5 creates them and then turns the pipeline on.
+
+This creates the resource group, the Fabric capacity, Azure role assignments and the GitHub source control connection, all named `contoso-fab-ml-*`, and writes `platform.tfstate` into the `tfstate-ml` container.
 
 The PAT is assigned to a write-only provider attribute, so Terraform never persists it in state. Rotating it later also requires incrementing `github_pat_version`, because there is nothing in state for Terraform to compare against.
 
@@ -322,6 +327,21 @@ The script pairs `terraform init -reconfigure` with the matching `-var-file` and
 If you skipped the connection in step 4, the workspaces still build; Git integration is reported as `git_integration_enabled = false` and engages on the next apply once the GUID is set.
 
 Never run `terraform apply -var environment=prod` by hand. The backend selects the environment; the variable alone only changes the display name, so applying prod variables against the dev backend **renames** the dev workspace instead of creating prod.
+
+### Create the deployment pipeline
+
+Now that the three workspaces exist, apply the platform again without the
+override from step 4. This is the pass that creates the pipeline and assigns the
+stages:
+
+```powershell
+cd infra\platform
+terraform apply
+cd ..\..
+```
+
+The GitHub Actions lane does the same thing as two separate jobs, first and last
+in its run.
 
 ## Step 6: Assign users to the Fabric workspaces
 

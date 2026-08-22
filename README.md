@@ -168,9 +168,14 @@ The manual lane uses two scripts because they have different lifetimes:
 # Then
 Copy-Item .env.example .env
 . ./scripts/Load-Env.ps1
-cd infra\platform; terraform init -reconfigure -backend-config="platform.backend.hcl"; terraform apply; cd ..\..
+
+# Platform, without the deployment pipeline: it assigns workspaces that do not exist yet
+cd infra\platform; terraform init -reconfigure -backend-config="platform.backend.hcl"; terraform apply -var=create_deployment_pipeline=false; cd ..\..
 . ./scripts/Load-Env.ps1        # reload with the connection GUID
 ./scripts/Apply-Workspaces.ps1
+
+# Platform again, now that the workspaces exist, to create the pipeline
+cd infra\platform; terraform apply; cd ..\..
 ```
 
 Follow the guide for your lane rather than this summary: [manual](docs/setup-manual-cli.md), [GitHub Actions](docs/setup-github-actions.md).

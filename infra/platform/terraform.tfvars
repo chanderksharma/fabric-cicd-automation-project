@@ -28,6 +28,11 @@ platform_admin_group_name = "sg-fabric-platform-admins"
 # Promotion path is still branch-per-environment Git integration. The pipeline
 # is created for stage comparison; deploying through it as well would make two
 # writers to test and prod.
+#
+# On a first build the workspaces do not exist yet, and the pipeline reads them
+# to assign its stages. Apply the platform once with
+# -var=create_deployment_pipeline=false, create the workspaces, then apply again
+# with this value. Teardown needs the same override in reverse.
 create_deployment_pipeline = true
 
 # Single F2 shared by dev, test and prod.
