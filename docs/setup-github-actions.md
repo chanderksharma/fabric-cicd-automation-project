@@ -54,6 +54,12 @@ The bootstrap service principal needs Owner on the target subscription. It also 
 * `Application.ReadWrite.All`
 * `Group.ReadWrite.All`
 * `DelegatedPermissionGrant.ReadWrite.All`
+* `AppRoleAssignment.ReadWrite.All`
+
+Grant `AppRoleAssignment.ReadWrite.All` deliberately. Bootstrap uses it to assign
+the deployment application its own Graph role, which removes the only manual step
+from a rebuild. It also lets the bootstrap identity grant any application
+permission to any application, so treat that credential as highly privileged.
 
 Create a federated identity credential on the bootstrap application with:
 
@@ -95,9 +101,9 @@ The workflow is idempotent. Re-running it adopts existing state, groups, applica
 
 The permanent deployment application is configured with Microsoft Graph
 `Directory.Read.All` application permission so Terraform can resolve the Entra
-groups and users referenced by platform and workspace configuration. A tenant
-administrator must grant admin consent for this permission before the first
-Terraform run.
+groups and users referenced by platform and workspace configuration. Bootstrap
+assigns that role itself, so no administrator has to consent between the
+bootstrap run and the first Terraform run.
 
 ## What bootstrap creates
 
