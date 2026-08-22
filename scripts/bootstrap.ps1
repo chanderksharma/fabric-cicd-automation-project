@@ -56,6 +56,10 @@ param(
     [string] $AdminGroup = 'sg-fabric-platform-admins',
     [string] $EngineerGroup = 'sg-fabric-data-engineers',
     [string] $AnalystGroup = 'sg-fabric-analysts',
+
+    # Humans to place in the platform admin group, by UPN or object ID. A CI run
+    # has no signed-in user, so without this nobody gains workspace access.
+    [string[]] $PlatformAdminMembers = @(),
     [string] $NspName = 'sec-perimeter',
     # Defaults to the state resource group, so the perimeter is owned and torn
     # down with the thing it protects rather than living in shared infrastructure.
@@ -195,6 +199,37 @@ if ($CreateGroups) {
 elseif (-not $groupsOk) {
     Write-Host '    Terraform will fail on the azuread_group data sources until these'
     Write-Host '    groups exist. Re-run with -CreateGroups, or create them out of band.'
+}
+
+if ($PlatformAdminMembers.Count -gt 0 -and $groupsOk) {
+    $adminOid = az ad group list --display-name $AdminGroup --query '[0].id' -o tsv
+    foreach ($member in $PlatformAdminMembers) {
+        $memberOid = if ($member -match '^[0-9a-fA-F-]{36}$') {
+            $member
+        }
+        else {
+            az ad user show --id $member --query id -o tsv 2>$null
+        }
+        if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
+
+        if (-not $memberOid) {
+            throw "Could not resolve '$member' to a user. Pass a UPN or an object ID."
+        }
+
+        $isMember = az ad group member check --group $adminOid --member-id $memberOid --query value -o tsv 2>$null
+        if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
+        if ($isMember -eq 'true') {
+            Write-Host "    ($member is already in $AdminGroup)"
+            continue
+        }
+
+        if ((Invoke-AzQuiet @('ad', 'group', 'member', 'add', '--group', $adminOid, '--member-id', $memberOid, '-o', 'none')) -eq 0) {
+            Write-Host "    added $member to $AdminGroup"
+        }
+        else {
+            throw "Could not add '$member' to $AdminGroup. The bootstrap identity needs directory write permission."
+        }
+    }
 }
 
 # -----------------------------------------------------------------------------

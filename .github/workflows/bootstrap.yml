@@ -32,6 +32,11 @@ on:
         required: true
         default: chanderksharma
         type: string
+      platform_admin_members:
+        description: Comma separated UPNs or object IDs to place in sg-fabric-platform-admins
+        required: false
+        default: ''
+        type: string
       configure_tenant_settings:
         description: Run interactive Fabric administrator consent in this job
         required: true
@@ -69,6 +74,7 @@ env:
   INPUT_LOCATION: ${{ inputs.location }}
   INPUT_ITEMS_REPOSITORY: ${{ inputs.items_repository }}
   INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
+  INPUT_PLATFORM_ADMIN_MEMBERS: ${{ inputs.platform_admin_members }}
   INPUT_PROPAGATION_WAIT_SECONDS: ${{ inputs.propagation_wait_seconds }}
 
 jobs:
@@ -180,6 +186,13 @@ jobs:
       - name: Create state and permanent OIDC identity
         shell: pwsh
         run: |
+          $adminMembers = @()
+          if ($env:INPUT_PLATFORM_ADMIN_MEMBERS) {
+              $adminMembers = $env:INPUT_PLATFORM_ADMIN_MEMBERS -split ',' |
+                  ForEach-Object { $_.Trim() } |
+                  Where-Object { $_ }
+          }
+
           ./scripts/bootstrap.ps1 `
               -Lane gh `
               -GitHubOrg $env:GITHUB_REPOSITORY_OWNER `
@@ -192,7 +205,8 @@ jobs:
               -StateStorageAccount $env:INPUT_STORAGE_ACCOUNT_NAME `
               -CreateGroups `
               -CallerObjectId $env:BOOTSTRAP_CALLER_OBJECT_ID `
-              -CallerPrincipalType ServicePrincipal
+              -CallerPrincipalType ServicePrincipal `
+              -PlatformAdminMembers $adminMembers
 
       - name: Resolve permanent deployment identity
         shell: pwsh
