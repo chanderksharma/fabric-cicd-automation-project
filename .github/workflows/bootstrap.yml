@@ -33,7 +33,7 @@ on:
         default: chanderksharma
         type: string
       platform_admin_members:
-        description: Comma separated UPNs or object IDs to place in sg-fabric-platform-admins
+        description: Comma separated object IDs to place in sg-fabric-platform-admins. UPNs need directory read, which the bootstrap identity does not have
         required: false
         default: ''
         type: string
