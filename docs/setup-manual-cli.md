@@ -2,14 +2,14 @@
 title: Manual Setup with Azure CLI and Terraform
 description: Step-by-step build of the Microsoft Fabric platform from an empty subscription using local tooling, for an operator with Global Administrator and subscription Owner.
 author: Fabric Platform Team
-ms.date: 2026-08-20
+ms.date: 2026-08-22
 ms.topic: how-to
 keywords:
   - microsoft fabric
   - terraform
   - azure cli
   - setup
-estimated_reading_time: 20
+estimated_reading_time: 26
 ---
 
 ## Who this is for
@@ -54,6 +54,42 @@ az rest --method GET --url "https://graph.microsoft.com/v1.0/me/memberOf" -o jso
 ```
 
 You need `Global Administrator` in that list. Owner on the subscription is separate and equally required.
+
+That query returns roles that are **active**, which is the point. If your roles are
+assigned through Privileged Identity Management, activate them before you start:
+an eligible-but-inactive role behaves exactly like not having it. Global Reader is
+the usual trap, because it reads everything, so every diagnostic command succeeds
+and only the writes fail.
+
+| Task in this guide | Minimum active role |
+|--------------------|---------------------|
+| Create the security groups and add members | Groups Administrator, User Administrator or Global Administrator |
+| Create and consent the app registrations | Privileged Role Administrator or Global Administrator |
+| Change Fabric tenant settings | Fabric Administrator, Power BI Administrator or Global Administrator |
+| Create Azure resources and assign roles | Owner on the subscription |
+
+### The fabric-admin-cli application
+
+Step 2 needs an app registration named `fabric-admin-cli`. The script creates one
+on first run, so there is nothing to prepare unless your account cannot consent to
+Graph permissions.
+
+| Property | Value |
+|----------|-------|
+| Name | `fabric-admin-cli` |
+| Client type | Public client, device code flow. No secret to store or rotate |
+| API permission | Power BI Service `Tenant.ReadWrite.All`, **delegated**, admin-consented |
+| Sign-in audience | Single tenant |
+
+The Azure CLI's own application requests only `user_impersonation` on the Power BI
+Service, so `az rest` cannot reach `/v1/admin/*` no matter which directory roles
+you hold. This registration exists solely to obtain a token carrying the admin
+scope, and you sign in through it interactively.
+
+It is created once per tenant, survives teardown, and is shared with the GitHub
+Actions lane. If your account cannot consent, ask an administrator to create the
+registration with that delegated permission granted; the script reuses an existing
+one.
 
 ### Check Fabric capacity quota
 
@@ -152,7 +188,7 @@ Fabric blocks service principals and GitHub sync by default. Neither Terraform n
 ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal
 ```
 
-The script creates an app registration with the delegated `Tenant.ReadWrite.All` scope, grants admin consent, signs you in with a device code, and enables the Git and service principal settings scoped to `sg-fabric-platform-admins`.
+The script reuses or creates the [fabric-admin-cli](#the-fabric-admin-cli-application) registration with the delegated `Tenant.ReadWrite.All` scope, grants admin consent, signs you in with a device code, and enables the Git and service principal settings scoped to `sg-fabric-platform-admins`.
 
 Allow up to 15 minutes for propagation. A run that fails immediately afterwards is expected.
 
@@ -228,7 +264,48 @@ If you skipped the connection in step 4, the workspaces still build; Git integra
 
 Never run `terraform apply -var environment=prod` by hand. The backend selects the environment; the variable alone only changes the display name, so applying prod variables against the dev backend **renames** the dev workspace instead of creating prod.
 
-## Step 6: Verify
+## Step 6: Assign users to the Fabric workspaces
+
+Terraform grants workspace roles to the three security groups and never to
+individuals, so a person gains access by joining a group. Until then the
+workspaces are invisible to them, including to you: bootstrap adds the identity
+that ran it, which is not necessarily your user account.
+
+```powershell
+$adminGroup = az ad group list --display-name sg-fabric-platform-admins --query '[0].id' -o tsv
+az ad group member add --group $adminGroup --member-id (az ad signed-in-user show --query id -o tsv)
+```
+
+Add colleagues by object ID, which avoids a directory lookup a restricted account
+may not be permitted to make:
+
+```powershell
+$userId = az ad user show --id someone@contoso.com --query id -o tsv
+az ad group member add --group $adminGroup --member-id $userId
+```
+
+Choose the group that matches the access the person needs:
+
+| Group | dev | test | prod |
+|-------|-----|------|------|
+| `sg-fabric-platform-admins` | Admin | Admin | Viewer |
+| `sg-fabric-data-engineers` | Member | Viewer | Viewer |
+| `sg-fabric-analysts` | Viewer | Viewer | Viewer |
+
+Verify membership with a direct check, because `az ad group member list` returns
+only user members and looks misleadingly empty when a group holds service
+principals:
+
+```powershell
+az ad group member check --group $adminGroup --member-id $userId --query value -o tsv
+```
+
+Fabric caches group membership, so allow a few minutes before the workspaces
+appear. Prod is deliberately read-only for humans, so its source-control panel
+stays hidden from platform admins even though the Git integration exists. A
+break-glass grant belongs in a reviewed pull request through `role_overrides`.
+
+## Step 7: Verify
 
 ```powershell
 $res = 'https://api.fabric.microsoft.com'
@@ -241,6 +318,22 @@ foreach ($e in 'dev','test','prod') {
 ```
 
 Expect `ConnectedAndInitialized` and `synced=True` for each.
+
+## After a teardown and rebuild
+
+Destroying the shared Entra groups invalidates every reference Fabric holds,
+because Fabric stores a group's object ID rather than its display name. A rebuilt
+group is a new object, so repeat two steps in this order:
+
+1. [Step 6](#step-6-assign-users-to-the-fabric-workspaces): re-add yourself and your colleagues to the recreated groups.
+2. [Step 2](#step-2-enable-fabric-tenant-settings): re-run `Enable-FabricGitIntegration.ps1`, which drops the dead group references and rewrites the current ones.
+
+Skipping the second leaves Terraform failing with `Unauthorized` when the Fabric
+provider lists connections, because the tenant settings still point at a group
+that no longer exists.
+
+To avoid the cycle entirely, leave the three groups out of teardown. They hold no
+Azure resources, cost nothing, and are shared with the GitHub Actions lane.
 
 ## Day-to-day
 
@@ -265,6 +358,10 @@ Expect `ConnectedAndInitialized` and `synced=True` for each.
 | `MissingItemDefinitionFiles` | An item folder lacks a valid definition. A `.platform` file alone is not enough for Lakehouse, Report or SemanticModel |
 | `unexpected connectivity type` | The `fabric_connections` data source cannot parse a tenant connection. Supply `TF_VAR_github_connection_id` instead |
 | `InsufficientScopes` on admin API | The Azure CLI token lacks Fabric admin scopes. Use `Enable-FabricGitIntegration.ps1`, which signs in through its own app |
+| `Unauthorized` listing connections during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run `Enable-FabricGitIntegration.ps1`, which drops the stale references |
+| `Insufficient privileges to complete the operation` from `az` | Your directory role is inactive or read-only. Activate it in Privileged Identity Management; Global Reader cannot write |
+| Workspaces exist but you cannot see them | You are not in one of the three security groups. See [Step 6](#step-6-assign-users-to-the-fabric-workspaces) |
+| Git integration missing on prod only | Expected. Platform admins hold Viewer on prod and the source-control panel is admin-only. Check through the admin portal or the REST API |
 
 ## Authoring Fabric items
 
