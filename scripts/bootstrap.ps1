@@ -416,22 +416,47 @@ else {
     if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $grantedRoles = '0' }
 
     if ($grantedRoles -eq '0') {
-        for ($attempt = 1; $attempt -le 6; $attempt++) {
-            $output = & az ad app permission admin-consent --id $AppId 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host '    granted admin consent for Directory.Read.All'
-                break
-            }
-            $global:LASTEXITCODE = 0
+        # az ad app permission admin-consent needs a delegated token, so CI has to
+        # assign the app role directly instead.
+        $graphSpId = az ad sp show --id $graphAppId --query id -o tsv
+        if (-not $graphSpId) { throw 'Could not resolve the Microsoft Graph service principal in this tenant.' }
 
-            $message = $output -join [Environment]::NewLine
-            if ($attempt -eq 6 -or $message -notmatch '(?i)does not exist|not found|temporar|try again|propagat') {
-                throw "Admin consent failed for '$AppName' ($AppId): $message. Grant Microsoft Graph Directory.Read.All in Entra ID > App registrations > API permissions, then re-run."
-            }
+        $tempFile = New-TemporaryFile
+        try {
+            Set-Content -Path $tempFile -Value (@{
+                    principalId = $SpObjectId
+                    resourceId  = $graphSpId
+                    appRoleId   = $directoryReadAllRoleId
+                } | ConvertTo-Json -Compress) -Encoding utf8
 
-            $delaySeconds = 5 * $attempt
-            Write-Host "    waiting for Entra propagation before consenting; retrying in ${delaySeconds}s"
-            Start-Sleep -Seconds $delaySeconds
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+                $output = & az rest --method POST `
+                    --url "https://graph.microsoft.com/v1.0/servicePrincipals/$graphSpId/appRoleAssignedTo" `
+                    --headers 'Content-Type=application/json' `
+                    --body "@$tempFile" -o none 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host '    granted Directory.Read.All'
+                    break
+                }
+                $global:LASTEXITCODE = 0
+
+                $message = ($output | Out-String).Trim()
+                if ($message -match 'already exists') {
+                    Write-Host '    Directory.Read.All is already granted'
+                    break
+                }
+
+                if ($attempt -eq 6 -or $message -notmatch '(?i)does not exist|not found|temporar|try again|propagat') {
+                    throw "Could not grant Directory.Read.All to '$AppName' ($AppId): $message. The bootstrap identity needs Microsoft Graph AppRoleAssignment.ReadWrite.All, or grant the permission in Entra ID > App registrations > API permissions."
+                }
+
+                $delaySeconds = 5 * $attempt
+                Write-Host "    waiting for Entra propagation before granting; retrying in ${delaySeconds}s"
+                Start-Sleep -Seconds $delaySeconds
+            }
+        }
+        finally {
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         }
     }
     else {
