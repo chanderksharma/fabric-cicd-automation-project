@@ -38,9 +38,9 @@ on:
         default: chanderksharma
         type: string
       trigger_apply:
-        description: Dispatch terraform-apply after bootstrap
+        description: Dispatch terraform-apply after bootstrap. Leave off until the Fabric tenant settings are enabled
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -297,6 +297,8 @@ jobs:
       - name: Dispatch Terraform deployment
         if: inputs.trigger_apply
         shell: pwsh
+        # Shares the fabric-gh-deployment concurrency group with this workflow,
+        # so the run queues until bootstrap finishes rather than racing it.
         run: gh workflow run terraform-apply.yml --ref '${{ github.event.repository.default_branch }}'
 
       - name: Bootstrap summary

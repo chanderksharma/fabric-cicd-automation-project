@@ -149,10 +149,9 @@ role belongs to a person and the step stays manual.
 
 Running `scripts/Enable-FabricGitIntegration.ps1` is a prerequisite of
 `terraform-apply`, not an optional extra: Fabric blocks service principals and
-GitHub sync by default, so the apply cannot succeed before it. Bootstrap
-dispatches the apply automatically unless you clear `trigger_apply`, so either
-clear it and run the script first, or expect that first apply to fail and
-re-dispatch it afterwards.
+GitHub sync by default, so the apply cannot succeed before it. `trigger_apply`
+defaults to off for that reason; turn it on only when the tenant settings are
+already in place.
 
 ### The fabric-admin-cli application
 
@@ -261,8 +260,10 @@ and 5 fail with `Insufficient privileges` without it.
 ### 3. Run bootstrap (GitHub workflow)
 
 Open **Actions > bootstrap > Run workflow** and set the state account, region,
-items repository and environment reviewer. Leave `trigger_apply` selected unless
-you want to inspect the results first.
+items repository and environment reviewer. Leave `trigger_apply` off on a first
+build: the apply cannot succeed until step 5 has enabled the Fabric tenant
+settings, and bootstrap has no way to do that for you. Turning it on is a
+convenience for a rebuild, where the settings already exist.
 
 `workspace_prefix` is optional and names the estate. Enter `my-contoso` and the
 workspaces become `my-contoso-dev`, `my-contoso-test` and `my-contoso-prod`, each
@@ -340,11 +341,11 @@ Allow up to 15 minutes for the change to propagate before running Terraform.
 **Prerequisite:** step 5 must have completed and propagated. `terraform-apply`
 fails at the Fabric provider with `InsufficientScopes` or `Unauthorized` while
 service principals are still blocked from the Fabric API, and no amount of
-re-running the workflow fixes it. If bootstrap dispatched the apply for you and
-it failed this way, run step 5 and dispatch it again.
+re-running the workflow fixes it.
 
-If you cleared `trigger_apply`, dispatch **terraform-apply** manually. Approve the
-protected `platform`, `test` and `prod` environments when prompted.
+Dispatch **terraform-apply** from the Actions tab. Approve the protected
+`platform`, `test` and `prod` environments when prompted. Bootstrap only
+dispatches it for you when `trigger_apply` was on.
 
 ### 7. Clean up the bootstrap path (manual)
 
@@ -381,7 +382,7 @@ replacing it.
 | Source | Items repository with one branch per workspace, `gh-{dev,test,prod}` unless `workspace_prefix` was set |
 | GitHub | Four environments, protection rules and repository/environment variables |
 | Fabric | Tenant settings after delegated approval |
-| Deployment | Dispatch of `terraform-apply.yml` |
+| Deployment | Dispatch of `terraform-apply.yml`, only when `trigger_apply` is on |
 
 GitHub-hosted runners add their current public IP to the state perimeter before `terraform init`. The IP rule grants network reachability only; Entra RBAC is still required to read state. Sequential apply jobs remove stale IP rules as they move through the environments.
 
