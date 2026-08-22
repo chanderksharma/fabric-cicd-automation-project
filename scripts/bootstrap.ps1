@@ -421,8 +421,8 @@ else {
         Write-Host '    added Microsoft Graph Directory.Read.All application permission'
     }
 
-    # Requesting the permission does not grant it. Without consent the directory
-    # stays unreadable and Terraform's group lookups fail with 403.
+    # Terraform takes the group object IDs as inputs, so this grant is a
+    # convenience for anyone running it by name rather than a requirement.
     $grantedRoles = az rest --method GET `
         --url "https://graph.microsoft.com/v1.0/servicePrincipals/$SpObjectId/appRoleAssignments" `
         --query "length(value[?appRoleId=='$directoryReadAllRoleId'])" -o tsv 2>$null
@@ -460,7 +460,9 @@ else {
                 }
 
                 if ($attempt -eq 6 -or $message -notmatch '(?i)does not exist|not found|temporar|try again|propagat') {
-                    throw "Could not grant Directory.Read.All to '$AppName' ($AppId): $message. The bootstrap identity needs Microsoft Graph AppRoleAssignment.ReadWrite.All, or grant the permission in Entra ID > App registrations > API permissions."
+                    Write-Host "    could not grant Directory.Read.All: $message" -ForegroundColor Yellow
+                    Write-Host '    continuing: Terraform receives the group object IDs directly and does not read the directory' -ForegroundColor Yellow
+                    break
                 }
 
                 $delaySeconds = 5 * $attempt

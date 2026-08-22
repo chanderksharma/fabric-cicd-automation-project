@@ -54,12 +54,11 @@ The bootstrap service principal needs Owner on the target subscription. It also 
 * `Application.ReadWrite.All`
 * `Group.ReadWrite.All`
 * `DelegatedPermissionGrant.ReadWrite.All`
-* `AppRoleAssignment.ReadWrite.All`
 
-Grant `AppRoleAssignment.ReadWrite.All` deliberately. Bootstrap uses it to assign
-the deployment application its own Graph role, which removes the only manual step
-from a rebuild. It also lets the bootstrap identity grant any application
-permission to any application, so treat that credential as highly privileged.
+`AppRoleAssignment.ReadWrite.All` is optional. Bootstrap uses it, when present, to
+grant the deployment application `Directory.Read.All`. Nothing depends on that
+grant succeeding, and the permission also lets its holder assign any application
+permission to any application, so leave it off unless you want the convenience.
 
 Create a federated identity credential on the bootstrap application with:
 
@@ -99,11 +98,11 @@ The workflow creates `platform`, `dev`, `test` and `prod` environments. `platfor
 
 The workflow is idempotent. Re-running it adopts existing state, groups, applications, repositories, branches, environments and variables.
 
-The permanent deployment application is configured with Microsoft Graph
-`Directory.Read.All` application permission so Terraform can resolve the Entra
-groups and users referenced by platform and workspace configuration. Bootstrap
-assigns that role itself, so no administrator has to consent between the
-bootstrap run and the first Terraform run.
+The permanent deployment application needs no Microsoft Graph permission.
+Bootstrap resolves the three security groups and publishes their object IDs as
+repository variables, which the Terraform workflows pass in as inputs. Terraform
+falls back to looking the groups up by display name only when those variables are
+absent, and that path does require `Directory.Read.All`.
 
 ## What bootstrap creates
 
