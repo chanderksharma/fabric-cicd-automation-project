@@ -251,13 +251,20 @@ identity running this script. Pass the object ID instead to skip the lookup.
         }
 
         $addOutput = & az ad group member add --group $adminOid --member-id $memberOid -o none 2>&1
+        $addText = ($addOutput | Out-String).Trim()
         if ($LASTEXITCODE -eq 0) {
             Write-Host "    added $member to $AdminGroup"
+        }
+        elseif ($addText -match 'already exist') {
+            # The membership check above is unreliable for a service principal,
+            # so a duplicate reference is the authoritative 'already a member'.
+            $global:LASTEXITCODE = 0
+            Write-Host "    ($member is already in $AdminGroup)"
         }
         else {
             $global:LASTEXITCODE = 0
             throw @"
-Could not add '$member' to $AdminGroup. $(($addOutput | Out-String).Trim())
+Could not add '$member' to $AdminGroup. $addText
 Writing group membership needs Microsoft Graph GroupMember.ReadWrite.All or
 Group.ReadWrite.All, admin-consented on the identity running this script.
 "@
@@ -446,12 +453,17 @@ else {
         }
         else {
             $addOutput = & az ad group member add --group $adminOid --member-id $SpObjectId -o none 2>&1
+            $addText = ($addOutput | Out-String).Trim()
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "    added deployment principal to $AdminGroup"
             }
+            elseif ($addText -match 'already exist') {
+                $global:LASTEXITCODE = 0
+                Write-Host "    (deployment principal is already in $AdminGroup)"
+            }
             else {
                 $global:LASTEXITCODE = 0
-                Write-Host "    WARNING could not add the deployment principal to ${AdminGroup}: $(($addOutput | Out-String).Trim())" -ForegroundColor Yellow
+                Write-Host "    WARNING could not add the deployment principal to ${AdminGroup}: $addText" -ForegroundColor Yellow
             }
         }
     }
