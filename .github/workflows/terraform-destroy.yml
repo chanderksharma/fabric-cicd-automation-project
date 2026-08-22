@@ -35,6 +35,9 @@ env:
   TF_IN_AUTOMATION: 'true'
   TF_INPUT: 'false'
   TF_VAR_lane: gh
+  # Empty when the repository variable is unset, which Terraform reads as
+  # "derive the name from prefix and lane".
+  TF_VAR_workspace_prefix: ${{ vars.FABRIC_WORKSPACE_PREFIX }}
   TF_VAR_github_owner: ${{ vars.FABRIC_ITEMS_OWNER }}
   TF_VAR_github_repository: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
   TF_VAR_git_owner_name: ${{ vars.FABRIC_ITEMS_OWNER }}
@@ -203,6 +206,7 @@ jobs:
           $itemsRepoPath = (Resolve-Path '.teardown/items').Path
           ./scripts/Remove-Platform.ps1 `
               -Lane gh `
+              -WorkspacePrefix $env:TF_VAR_workspace_prefix `
               -SubscriptionId $env:ARM_SUBSCRIPTION_ID `
               -StateResourceGroup $env:STATE_RESOURCE_GROUP `
               -ItemsRepoPath $itemsRepoPath `

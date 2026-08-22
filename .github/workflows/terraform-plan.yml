@@ -37,6 +37,9 @@ env:
   # the gh lane and nothing else. Making it configurable would let a mistyped
   # variable point a workflow at the manually built estate.
   TF_VAR_lane: gh
+  # Empty when the repository variable is unset, which Terraform reads as
+  # "derive the name from prefix and lane".
+  TF_VAR_workspace_prefix: ${{ vars.FABRIC_WORKSPACE_PREFIX }}
   TF_VAR_github_owner: ${{ vars.FABRIC_ITEMS_OWNER }}
   TF_VAR_github_repository: ${{ vars.FABRIC_ITEMS_REPOSITORY }}
   TF_VAR_git_owner_name: ${{ vars.FABRIC_ITEMS_OWNER }}

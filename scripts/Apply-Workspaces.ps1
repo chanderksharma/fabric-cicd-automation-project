@@ -27,6 +27,11 @@ param(
     [ValidateSet('gh', 'ml')]
     [string] $Lane,
 
+    # Names the workspaces and branches, replacing the derived <prefix>-<lane>.
+    # Defaults to TF_VAR_workspace_prefix so .env can carry it.
+    [ValidatePattern('^$|^[a-z][a-z0-9-]{2,30}$', Options = 'None')]
+    [string] $WorkspacePrefix,
+
     [string] $ContainerPrefix = 'tfstate',
 
     [switch] $PlanOnly,
@@ -42,6 +47,11 @@ if (-not $Lane) {
 }
 $env:TF_VAR_lane = $Lane
 
+if (-not $PSBoundParameters.ContainsKey('WorkspacePrefix')) {
+    $WorkspacePrefix = $env:TF_VAR_workspace_prefix
+}
+$env:TF_VAR_workspace_prefix = $WorkspacePrefix
+
 $root = Join-Path (Split-Path -Parent $PSScriptRoot) 'infra/workspace'
 
 if (-not $env:ARM_TENANT_ID -and -not $env:TF_VAR_tenant_id) {
@@ -49,6 +59,7 @@ if (-not $env:ARM_TENANT_ID -and -not $env:TF_VAR_tenant_id) {
 }
 
 Write-Host "Lane: $Lane" -ForegroundColor Yellow
+Write-Host "Workspace prefix: $(if ($WorkspacePrefix) { $WorkspacePrefix } else { "(derived from prefix and lane)" })" -ForegroundColor Yellow
 
 $results = @()
 

@@ -136,7 +136,7 @@ permission to any application, which is a large privilege for a CI credential.
 |-------------|-------|
 | Administrator on this repository | Needed to dispatch workflows and set variables |
 | A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers |
-| An items repository | Holds the Fabric item definitions. Bootstrap creates it and the `gh-dev`, `gh-test` and `gh-prod` branches if missing |
+| An items repository | Holds the Fabric item definitions. Bootstrap creates it and one branch per workspace if missing |
 | `BOOTSTRAP_GITHUB_TOKEN` | Temporary. Repository administration, Actions and Environments read/write |
 | `FABRIC_GITHUB_PAT` | Permanent. Fine-grained token with Contents read/write on the items repository |
 
@@ -255,6 +255,16 @@ and 5 fail with `Insufficient privileges` without it.
 Open **Actions > bootstrap > Run workflow** and set the state account, region,
 items repository and environment reviewer. Leave `trigger_apply` selected unless
 you want to inspect the results first.
+
+`workspace_prefix` is optional and names the estate. Enter `my-contoso` and the
+workspaces become `my-contoso-dev`, `my-contoso-test` and `my-contoso-prod`, each
+syncing with the branch of the same name, which bootstrap creates. Left empty,
+the names stay `contoso-fab-gh-<environment>` on `gh-<environment>` branches.
+
+The value is published as the `FABRIC_WORKSPACE_PREFIX` repository variable and
+read by every later plan, apply and destroy. Changing it after the first apply
+renames every workspace, and Fabric implements a rename as destroy and recreate,
+so the items in them are lost. Pick it before step 6, not after.
 
 The workflow is idempotent: re-running it adopts existing state, groups,
 applications, repositories, branches, environments and variables.

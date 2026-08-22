@@ -116,6 +116,12 @@ All three branches from the same commit. That is what keeps later promotion diff
 
 The `ml-` prefix is not decoration. If this lane and the GitHub Actions lane shared a branch, their two workspaces would overwrite each other on every sync. The lane belongs in the branch name for the same reason it belongs in the workspace name.
 
+To name the estate after something other than the lane, pass
+`-WorkspacePrefix my-contoso` to the bootstrap in the next step and use
+`my-contoso-dev`, `my-contoso-test` and `my-contoso-prod` as the branch names
+here instead. Workspaces and branches then share one stem, so a branch name says
+which workspace owns it.
+
 ## Step 1: Bootstrap
 
 Two scripts, because they have different lifetimes. The state foundation is created once for the tenant and shared by both lanes; the bootstrap runs once per lane.
@@ -153,6 +159,13 @@ Order matters inside the script and is not obvious: governance policy forces the
 ```
 
 Every parameter has a default, so that really is the whole command. It resolves the same storage account name, checks whether the account **and this lane's container** already exist, and runs `New-StateFoundation.ps1` only if something is missing. Then it creates the Entra groups and grants Azure RBAC.
+
+Pass `-WorkspacePrefix my-contoso` to name the workspaces `my-contoso-dev`,
+`my-contoso-test` and `my-contoso-prod`, each syncing with the branch of the
+same name. Set the same value as `workspace_prefix` in
+`infra/workspace/common.auto.tfvars` and `infra/platform/terraform.tfvars`, or
+export `TF_VAR_workspace_prefix`, so every later plan derives the same names.
+Omitted, the names stay `contoso-fab-ml-<environment>`.
 
 The lane defaults to `ml`, which is why no `-Lane` appears above. In this lane the script deliberately does **not** create an app registration or federated credentials: nothing here authenticates as a service principal, and an unused identity holding Contributor and User Access Administrator on the subscription is a liability rather than an asset. Pass `-CreateServicePrincipal` if you later want to hand this same foundation to a pipeline.
 

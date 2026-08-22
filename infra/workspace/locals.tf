@@ -1,6 +1,14 @@
 locals {
-  name_prefix    = var.lane == "" ? var.prefix : "${var.prefix}-${var.lane}"
-  workspace_name = "${local.name_prefix}-${var.environment}"
+  # workspace_prefix, when set, replaces the derived <prefix>-<lane> stem for
+  # both the workspace name and the branch. An unset GitHub Actions variable
+  # arrives as "", not null, so both count as absent.
+  explicit_prefix = var.workspace_prefix != null && var.workspace_prefix != ""
+  name_prefix     = local.explicit_prefix ? var.workspace_prefix : (var.lane == "" ? var.prefix : "${var.prefix}-${var.lane}")
+  workspace_name  = "${local.name_prefix}-${var.environment}"
+
+  # The branch carries the same stem as the workspace, so one glance at a branch
+  # name says which workspace owns it.
+  branch_prefix = local.explicit_prefix ? var.workspace_prefix : var.lane
 
   # Matches the platform root's capacity naming, so the two state files agree
   # without passing a value between them.
@@ -76,7 +84,7 @@ locals {
     organization_name       = null
     project_name            = null
     repository_name         = var.git_repository_name
-    branch_name             = coalesce(var.git_branch_name, var.lane == "" ? var.environment : "${var.lane}-${var.environment}")
+    branch_name             = coalesce(var.git_branch_name, local.branch_prefix == "" ? var.environment : "${local.branch_prefix}-${var.environment}")
     directory_name          = var.git_directory_name
     connection_id           = var.github_connection_id
     credentials_source      = "ConfiguredConnection"

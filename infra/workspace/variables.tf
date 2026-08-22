@@ -42,6 +42,24 @@ variable "prefix" {
   }
 }
 
+variable "workspace_prefix" {
+  description = <<-EOT
+    Names this lane outright, replacing the derived <prefix>-<lane>. Set it to
+    my-contoso and this workspace becomes my-contoso-<environment>, syncing with
+    the branch of the same name.
+
+    Null or empty keeps the derived name. Must match the value the platform root
+    was applied with, otherwise the capacity lookup finds nothing.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.workspace_prefix == null || var.workspace_prefix == "" || can(regex("^[a-z][a-z0-9-]{2,30}$", var.workspace_prefix))
+    error_message = "workspace_prefix must be 3-31 characters, start with a lowercase letter, and contain only lowercase letters, digits and hyphens."
+  }
+}
+
 variable "capacity_key" {
   description = "Logical capacity key from the platform root's capacities map. Combined with the prefix and lane to find the capacity, so nothing has to be copied between state files."
   type        = string

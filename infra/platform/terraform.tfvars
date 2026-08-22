@@ -13,6 +13,11 @@
 
 prefix = "contoso-fab"
 
+# Names this lane outright: capacity, resource group, connection, deployment
+# pipeline and workspaces all become my-contoso-*. Must match the value the
+# workspace root is applied with. Commented out, names derive from prefix+lane.
+# workspace_prefix = "my-contoso"
+
 # centralus is the only region with Fabric capacity quota on this subscription
 # (limit 512 CU; canadacentral and others are 0). Check before changing:
 #   az rest --method GET --url "https://management.azure.com/subscriptions/<sub>/providers/Microsoft.Fabric/locations/<region>/usages?api-version=2023-11-01"

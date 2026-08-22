@@ -1,8 +1,9 @@
 locals {
   # Reading the directory is the only thing the deployment identity needs a
   # Microsoft Graph permission for. Supplying the group object ID removes it.
-  # An unset GitHub Actions variable arrives as "", not null.
-  lookup_directory = coalesce(var.platform_admin_group_object_id, "") == ""
+  # An unset GitHub Actions variable arrives as "", not null. coalesce cannot
+  # do this test: it errors when every argument is null or empty.
+  lookup_directory = var.platform_admin_group_object_id == null || var.platform_admin_group_object_id == ""
 
   platform_admin_group_object_id = local.lookup_directory ? data.azuread_group.platform_admins[0].object_id : var.platform_admin_group_object_id
 
@@ -11,8 +12,11 @@ locals {
   # Single source of naming truth. Everything a lane owns hangs off this, so
   # the gh and ml builds never contend for the same Azure or Fabric object.
   # An empty lane reproduces the pre-lane names, which is what lets destroy
-  # reach that estate.
-  name_prefix = var.lane == "" ? var.prefix : "${var.prefix}-${var.lane}"
+  # reach that estate. workspace_prefix replaces the whole stem when set.
+  # An unset GitHub Actions variable arrives as "", not null.
+  explicit_prefix     = var.workspace_prefix != null && var.workspace_prefix != ""
+  derived_name_prefix = var.lane == "" ? var.prefix : "${var.prefix}-${var.lane}"
+  name_prefix         = local.explicit_prefix ? var.workspace_prefix : local.derived_name_prefix
 
   tenant_id       = coalesce(var.tenant_id, data.azurerm_client_config.current.tenant_id)
   subscription_id = coalesce(var.subscription_id, data.azurerm_client_config.current.subscription_id)

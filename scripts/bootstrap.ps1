@@ -31,6 +31,21 @@ param(
     # Lane-specific resources carry the lane in their name, so both can exist
     # in one tenant at the same time.
     [ValidateSet('gh', 'ml')] [string] $Lane = 'ml',
+    # Names the workspaces and their Git branches: my-contoso gives
+    # my-contoso-dev, my-contoso-test and my-contoso-prod, and branches of the
+    # same name. Empty keeps the derived contoso-fab-<lane>-<environment>.
+    #
+    # Terraform reads it as TF_VAR_workspace_prefix, so it must match on every
+    # later plan and apply; changing it renames every workspace, which Fabric
+    # implements as destroy and recreate.
+    #
+    # Options None makes the match case-sensitive: ValidatePattern ignores case
+    # by default, and Terraform rejects anything that is not lowercase.
+    [ValidatePattern('^$|^[a-z][a-z0-9-]{2,30}$', Options = 'None')]
+    [string] $WorkspacePrefix = '',
+    # Only used to report the derived names when -WorkspacePrefix is empty.
+    # Must match the Terraform prefix variable, which owns the real value.
+    [string] $Prefix = 'contoso-fab',
     [string] $GitHubOrg = 'chanderksharma',
     [string] $GitHubOrgId = '',
     [string] $GitHubRepo = 'fabric-cicd-automation-project',
@@ -89,6 +104,10 @@ Set-StrictMode -Version Latest
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $AppName) { $AppName = "sp-fabric-cicd-$Lane" }
+
+# What the workspaces and their branches will be called. Terraform derives the
+# same value from workspace_prefix, or from prefix and lane when it is empty.
+$NamePrefix = if ($WorkspacePrefix) { $WorkspacePrefix } else { "$Prefix-$Lane" }
 
 # PowerShell 7.4+ turns any non-zero native exit code into a terminating error
 # while ErrorActionPreference is Stop. This script inspects $LASTEXITCODE to
@@ -189,6 +208,13 @@ if ($groupsOk -and $env:GITHUB_ENV) {
         "FABRIC_ENGINEER_GROUP_ID=$($GroupObjectIds[$EngineerGroup])"
         "FABRIC_ANALYST_GROUP_ID=$($GroupObjectIds[$AnalystGroup])"
     ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
+}
+
+# Published even when empty, so the apply workflow always has the variable and
+# an unset one cannot silently fall back to a different set of names.
+if ($env:GITHUB_ENV) {
+    "FABRIC_WORKSPACE_PREFIX=$WorkspacePrefix" |
+        Add-Content -Path $env:GITHUB_ENV -Encoding utf8
 }
 
 if ($CreateGroups) {
@@ -664,6 +690,7 @@ Write-Host @"
 Bootstrap complete for the '$Lane' lane. None of the values below are secrets.
 
   FABRIC_LANE            $Lane
+  FABRIC_WORKSPACE_PREFIX $(if ($WorkspacePrefix) { $WorkspacePrefix } else { "(none; derived $NamePrefix)" })
   AZURE_TENANT_ID        $TenantId
   AZURE_SUBSCRIPTION_ID  $SubscriptionId
   AZURE_CLIENT_ID        $(if ($AppId) { $AppId } else { '(none; this lane runs as you)' })
@@ -673,8 +700,22 @@ State for this lane lives in its own container:
   $StateStorageAccount / $StateContainer
   platform.tfstate, workspace-dev.tfstate, workspace-test.tfstate, workspace-prod.tfstate
 
+Terraform will create these, and the items repository needs a branch per row:
+
+  $NamePrefix-dev    <- branch $NamePrefix-dev
+  $NamePrefix-test   <- branch $NamePrefix-test
+  $NamePrefix-prod   <- branch $NamePrefix-prod
+$(if (-not $WorkspacePrefix) {
+"
 Every Fabric and Azure resource this lane creates carries the '-$Lane' suffix,
-so the other lane can be built alongside it without collision.
+so the other lane can be built alongside it without collision."
+} else {
+"
+These names come from -WorkspacePrefix, which replaces the lane suffix. Give
+the other lane a different prefix, or the two will contend for one estate.
+Pass -var=workspace_prefix=$WorkspacePrefix to every terraform plan and apply,
+or export TF_VAR_workspace_prefix=$WorkspacePrefix."
+})
 
 Next steps: docs/setup-$(if ($Lane -eq 'gh') { 'github-actions' } else { 'manual-cli' }).md
 Tenant settings and Entra group creation are manual runbooks - Terraform

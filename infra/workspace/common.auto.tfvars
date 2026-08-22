@@ -13,6 +13,15 @@
 
 prefix = "contoso-fab"
 
+# Names the workspaces and their Git branches outright. Uncomment and the
+# workspaces become my-contoso-dev, my-contoso-test and my-contoso-prod, each
+# syncing with the branch of the same name. Commented out, the names are
+# derived as <prefix>-<lane>-<environment>.
+#
+# The platform root must be applied with the same value, and changing it later
+# renames every workspace, which Fabric implements as destroy and recreate.
+# workspace_prefix = "my-contoso"
+
 platform_admin_group_name = "sg-fabric-platform-admins"
 data_engineer_group_name  = "sg-fabric-data-engineers"
 analyst_group_name        = "sg-fabric-analysts"

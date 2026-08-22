@@ -55,6 +55,25 @@ variable "prefix" {
   }
 }
 
+variable "workspace_prefix" {
+  description = <<-EOT
+    Names this lane outright, replacing the derived <prefix>-<lane>. Set it to
+    my-contoso and the workspaces become my-contoso-dev, my-contoso-test and
+    my-contoso-prod, with the capacity, resource group, connection, deployment
+    pipeline and Git branches following the same stem.
+
+    Null or empty keeps the derived name. Two lanes must not share a value:
+    the prefix is the only thing keeping their objects apart.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.workspace_prefix == null || var.workspace_prefix == "" || can(regex("^[a-z][a-z0-9-]{2,30}$", var.workspace_prefix))
+    error_message = "workspace_prefix must be 3-31 characters, start with a lowercase letter, and contain only lowercase letters, digits and hyphens."
+  }
+}
+
 variable "location" {
   description = "Azure region for the resource group and Fabric capacity. Fabric quota is per region and defaults to zero, so verify the subscription has capacity units available before changing this."
   type        = string
@@ -146,7 +165,7 @@ variable "platform_admin_group_object_id" {
   default     = null
 
   validation {
-    condition     = coalesce(var.platform_admin_group_object_id, "") == "" || can(regex("^[0-9a-fA-F-]{36}$", var.platform_admin_group_object_id))
+    condition     = var.platform_admin_group_object_id == null || var.platform_admin_group_object_id == "" || can(regex("^[0-9a-fA-F-]{36}$", var.platform_admin_group_object_id))
     error_message = "platform_admin_group_object_id must be a GUID, or empty to look the group up by name."
   }
 }

@@ -49,6 +49,13 @@ param(
     [ValidateSet('gh', 'ml', '')] [string] $Lane = '',
 
     [string] $Prefix = 'contoso-fab',
+
+    # The value the lane was bootstrapped with. Replaces the derived
+    # <prefix>-<lane> for resource names, branch names and the Terraform
+    # variable, so the destroy plan looks up the objects that actually exist.
+    [ValidatePattern('^$|^[a-z][a-z0-9-]{2,30}$', Options = 'None')]
+    [string] $WorkspacePrefix = '',
+
     [string] $SubscriptionId,
 
     # Target the pre-lane estate: names without a lane suffix, the original
@@ -107,10 +114,14 @@ $RemovePlatformCmdlet = $PSCmdlet
 
 # The lane suffix appears in three places that must agree: resource names, the
 # state container and the app registration. -Legacy drops it from all three.
+# -WorkspacePrefix replaces the name and branch stems but not the container or
+# the app registration, which stay lane-scoped.
 $StateContainer = if ($Legacy) { $ContainerPrefix } else { "$ContainerPrefix-$Lane" }
-if (-not $NamePrefix) { $NamePrefix = if ($Legacy) { $Prefix } else { "$Prefix-$Lane" } }
+if (-not $NamePrefix) {
+    $NamePrefix = if ($WorkspacePrefix) { $WorkspacePrefix } elseif ($Legacy) { $Prefix } else { "$Prefix-$Lane" }
+}
 if (-not $AppName) { $AppName = if ($Legacy) { 'sp-fabric-cicd' } else { "sp-fabric-cicd-$Lane" } }
-$BranchPrefix = if ($Legacy) { '' } else { "$Lane-" }
+$BranchPrefix = if ($WorkspacePrefix) { "$WorkspacePrefix-" } elseif ($Legacy) { '' } else { "$Lane-" }
 
 # Terraform must derive the same names the estate was built with, or the
 # fabric_capacity data source looks up a capacity that no longer exists and the
@@ -220,7 +231,7 @@ function Invoke-TerraformDestroy {
             return $false
         }
 
-        $tfArgs = @('destroy', '-auto-approve', '-no-color', "-var=lane=$TfLane")
+        $tfArgs = @('destroy', '-auto-approve', '-no-color', "-var=lane=$TfLane", "-var=workspace_prefix=$WorkspacePrefix")
         if ($VarFile) { $tfArgs += "-var-file=$VarFile" }
         foreach ($assignment in $VarOverrides) { $tfArgs += "-var=$assignment" }
         & terraform @tfArgs
