@@ -64,6 +64,23 @@ $PSNativeCommandUseErrorActionPreference = $false
 $ApiVersion = '2023-08-01-preview'
 
 if (-not $SubscriptionId) { $SubscriptionId = az account show --query id -o tsv }
+
+. (Join-Path $PSScriptRoot 'StateAccountHelpers.ps1')
+
+if (-not $PSBoundParameters.ContainsKey('PerimeterName')) {
+    $resolved = Resolve-NetworkSecurityPerimeter -SubscriptionId $SubscriptionId `
+        -ResourceGroup $ResourceGroup -PreferredName $PerimeterName -ApiVersion $ApiVersion
+
+    if ($resolved.Adopted) {
+        Write-Warning "Using perimeter '$($resolved.Name)'; '$PerimeterName' does not exist in '$ResourceGroup'."
+        $PerimeterName = $resolved.Name
+    }
+    elseif (-not $resolved.Existing) {
+        $found = if ($resolved.Candidates.Count) { $resolved.Candidates -join ', ' } else { 'none' }
+        throw "No perimeter named '$PerimeterName' in '$ResourceGroup'. Found: $found. Pass -PerimeterName, or run New-StateFoundation.ps1 to create one."
+    }
+}
+
 $PerimeterId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/networkSecurityPerimeters/$PerimeterName"
 $PerimeterUrl = "https://management.azure.com$PerimeterId"
 

@@ -301,6 +301,18 @@ if ($SkipNsp) {
 }
 elseif ($PSCmdlet.ShouldProcess($NspName, 'create network security perimeter')) {
     $nspApi = '2023-08-01-preview'
+
+    # Adopt the perimeter the group already holds. Creating a second one would
+    # leave the storage account associated with the first.
+    if (-not $PSBoundParameters.ContainsKey('NspName')) {
+        $resolvedNsp = Resolve-NetworkSecurityPerimeter -SubscriptionId $SubscriptionId `
+            -ResourceGroup $NspResourceGroup -PreferredName $NspName -ApiVersion $nspApi
+        if ($resolvedNsp.Adopted) {
+            Write-Warning "Reusing existing perimeter '$($resolvedNsp.Name)' rather than creating '$NspName'."
+            $NspName = $resolvedNsp.Name
+        }
+    }
+
     $nspId = "/subscriptions/$SubscriptionId/resourceGroups/$NspResourceGroup/providers/Microsoft.Network/networkSecurityPerimeters/$NspName"
     $nspUrlBase = "https://management.azure.com$nspId"
 

@@ -20,6 +20,7 @@ set -uo pipefail
 LANE="ml"
 LEGACY="no"
 NAME_PREFIX_OVERRIDE=""
+WORKSPACE_PREFIX=""
 PREFIX="contoso-fab"
 APP_NAME=""
 STATE_RG="rg-terraform-state"
@@ -44,6 +45,8 @@ usage() {
 Usage: ./scripts/teardown.sh --confirm [options]
 
   --lane gh|ml           Lane to destroy (default: ml)
+  --workspace-prefix P   Names the estate, replacing <prefix>-<lane>. Must match
+                         what it was built with, or nothing is found
   --legacy               Target the pre-lane estate: names, state keys and app
                          registration without a lane suffix. The resulting
                          prefix also matches both lanes.
@@ -65,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --lane)                    LANE="$2"; shift 2 ;;
     --legacy)                  LEGACY="yes"; shift ;;
     --name-prefix)             NAME_PREFIX_OVERRIDE="$2"; shift 2 ;;
+    --workspace-prefix)        WORKSPACE_PREFIX="$2"; shift 2 ;;
     --prefix)                  PREFIX="$2"; shift 2 ;;
     --app-name)                APP_NAME="$2"; shift 2 ;;
     --items-repo)              ITEMS_REPO="$2"; shift 2 ;;
@@ -87,6 +91,15 @@ fi
 
 # The lane suffix appears in three places that must agree: resource names, the
 # state container and the app registration. --legacy drops it from all three.
+# --workspace-prefix replaces the name and branch stems but not the container or
+# the app registration, which stay lane-scoped.
+if [[ -n "$WORKSPACE_PREFIX" ]]; then
+  if [[ ! "$WORKSPACE_PREFIX" =~ ^[a-z][a-z0-9-]{2,30}$ ]]; then
+    echo "--workspace-prefix must be 3-31 lowercase characters starting with a letter" >&2
+    exit 1
+  fi
+fi
+
 if [[ "$LEGACY" == "yes" ]]; then
   STATE_CONTAINER="$CONTAINER_PREFIX"
   BRANCH_PREFIX=""
@@ -98,6 +111,15 @@ else
   NAME_PREFIX="${NAME_PREFIX_OVERRIDE:-${PREFIX}-${LANE}}"
   [[ -n "$APP_NAME" ]] || APP_NAME="sp-fabric-cicd-${LANE}"
 fi
+
+if [[ -n "$WORKSPACE_PREFIX" ]]; then
+  BRANCH_PREFIX="${WORKSPACE_PREFIX}-"
+  NAME_PREFIX="${NAME_PREFIX_OVERRIDE:-$WORKSPACE_PREFIX}"
+fi
+
+# Empty describes the estate that predates lanes, which is what lets destroy
+# still reach it.
+if [[ "$LEGACY" == "yes" ]]; then TF_LANE=""; else TF_LANE="$LANE"; fi
 
 FABRIC_RG="rg-${NAME_PREFIX}-fabric"
 
@@ -124,6 +146,8 @@ note_failure() { echo "    FAILED  $*" >&2; FAILED=1; }
 # -----------------------------------------------------------------------------
 terraform_destroy() {
   local dir="$1" backend="$2" key="$3" varfile="${4:-}" label="$5"
+  shift 5
+  local overrides=("$@")
 
   if ! terraform -chdir="${REPO_ROOT}/${dir}" init -reconfigure -no-color \
         -backend-config="$backend" \
@@ -133,8 +157,11 @@ terraform_destroy() {
     return 1
   fi
 
-  local args=(destroy -auto-approve -no-color)
+  # Terraform must derive the same names the estate was built with, or the
+  # capacity lookup misses and the plan fails before removing anything.
+  local args=(destroy -auto-approve -no-color "-var=lane=${TF_LANE}" "-var=workspace_prefix=${WORKSPACE_PREFIX}")
   [[ -n "$varfile" ]] && args+=("-var-file=${varfile}")
+  [[ ${#overrides[@]} -gt 0 ]] && args+=("${overrides[@]}")
 
   if ! terraform -chdir="${REPO_ROOT}/${dir}" "${args[@]}"; then
     note_failure "destroy for ${label}: the orphan sweep will try to finish the job"
@@ -201,8 +228,10 @@ else
   done
 
   echo "==> Destroying the platform (capacity, pipeline, connection, RBAC)"
+  # The stage workspaces are gone, so the pipeline's lookups would fail on read.
+  # Disabling the gate still destroys the pipeline recorded in state.
   terraform_destroy "infra/platform" "platform.backend.hcl" \
-    "platform.tfstate" "" "${NAME_PREFIX} platform"
+    "platform.tfstate" "" "${NAME_PREFIX} platform" "-var=create_deployment_pipeline=false"
 fi
 
 # -----------------------------------------------------------------------------

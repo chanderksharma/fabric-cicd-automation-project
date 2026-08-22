@@ -22,10 +22,16 @@ set -euo pipefail
 SUBSCRIPTION_ID=""
 LOCATION="centralus"
 PREFIX="contoso-fab"
+# Lane-specific resources carry the lane in their name, so both estates can
+# exist in one tenant. Empty container and app names below are derived from it.
+LANE="ml"
+# Names the workspaces and their Git branches, replacing <prefix>-<lane>.
+WORKSPACE_PREFIX=""
 STATE_RG="rg-terraform-state"
 STATE_SA="stcontosofabtfstate"
-STATE_CONTAINER="tfstate"
-APP_NAME="sp-fabric-cicd"
+CONTAINER_PREFIX="tfstate"
+STATE_CONTAINER=""
+APP_NAME=""
 ADMIN_GROUP="sg-fabric-platform-admins"
 ENGINEER_GROUP="sg-fabric-data-engineers"
 ANALYST_GROUP="sg-fabric-analysts"
@@ -57,10 +63,14 @@ Options:
   --subscription-id ID    Target subscription (default: current az account)
   --location REGION       Azure region (default: centralus)
   --prefix NAME           Naming prefix (default: contoso-fab)
+  --lane gh|ml            Deployment lane (default: ml). Selects the state
+                          container and the app registration name
+  --workspace-prefix P    Names the workspaces and their branches, replacing
+                          <prefix>-<lane>. Empty keeps the derived names
   --state-rg NAME         State resource group (default: rg-terraform-state)
   --state-sa NAME         State storage account (default: stcontosofabtfstate)
-  --state-container NAME  State container (default: tfstate)
-  --app-name NAME         App registration display name (default: sp-fabric-cicd)
+  --state-container NAME  State container (default: tfstate-<lane>)
+  --app-name NAME         App registration display name (default: sp-fabric-cicd-<lane>)
   --admin-group NAME      Entra group granted local state access
                           (default: sg-fabric-platform-admins)
   --create-groups         Create the three sg-fabric-* security groups if they
@@ -89,6 +99,8 @@ while [[ $# -gt 0 ]]; do
     --subscription-id)   SUBSCRIPTION_ID="$2"; shift 2 ;;
     --location)          LOCATION="$2"; shift 2 ;;
     --prefix)            PREFIX="$2"; shift 2 ;;
+    --lane)              LANE="$2"; shift 2 ;;
+    --workspace-prefix)  WORKSPACE_PREFIX="$2"; shift 2 ;;
     --state-rg)          STATE_RG="$2"; shift 2 ;;
     --state-sa)          STATE_SA="$2"; shift 2 ;;
     --state-container)   STATE_CONTAINER="$2"; shift 2 ;;
@@ -112,6 +124,22 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+if [[ "$LANE" != "gh" && "$LANE" != "ml" ]]; then
+  echo "ERROR: --lane must be gh or ml, got '$LANE'." >&2
+  exit 1
+fi
+
+if [[ -n "$WORKSPACE_PREFIX" && ! "$WORKSPACE_PREFIX" =~ ^[a-z][a-z0-9-]{2,30}$ ]]; then
+  echo "ERROR: --workspace-prefix must be 3-31 lowercase characters starting with a letter." >&2
+  exit 1
+fi
+
+# One container per lane; the account is shared. Derived only when not overridden.
+[[ -n "$STATE_CONTAINER" ]] || STATE_CONTAINER="${CONTAINER_PREFIX}-${LANE}"
+[[ -n "$APP_NAME" ]] || APP_NAME="sp-fabric-cicd-${LANE}"
+
+NAME_PREFIX="${WORKSPACE_PREFIX:-${PREFIX}-${LANE}}"
 
 if [[ -z "$GITHUB_ORG" || -z "$GITHUB_ORG_ID" || -z "$GITHUB_REPO" || -z "$GITHUB_REPO_ID" ]]; then
   echo "ERROR: --github-org, --github-org-id, --github-repo and --github-repo-id are required." >&2
@@ -590,10 +618,21 @@ cat <<EOF
 =============================================================================
 Bootstrap complete. None of the values below are secrets.
 
+  FABRIC_LANE            $LANE
+  FABRIC_WORKSPACE_PREFIX ${WORKSPACE_PREFIX:-(none; derived $NAME_PREFIX)}
   AZURE_CLIENT_ID        $APP_ID
   AZURE_TENANT_ID        $TENANT_ID
   AZURE_SUBSCRIPTION_ID  $SUBSCRIPTION_ID
   SP object id           $SP_OID   <- cicd_service_principal_object_id
+
+State for this lane lives in its own container:
+  ${STATE_SA} / ${STATE_CONTAINER}
+
+Terraform will create these, and the items repository needs a branch per row:
+
+  ${NAME_PREFIX}-dev    <- branch ${NAME_PREFIX}-dev
+  ${NAME_PREFIX}-test   <- branch ${NAME_PREFIX}-test
+  ${NAME_PREFIX}-prod   <- branch ${NAME_PREFIX}-prod
 
 Remaining manual steps:
 

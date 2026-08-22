@@ -109,3 +109,40 @@ function Test-StateContainer {
     # foundation script needs to run, so they are treated alike here.
     return ($LASTEXITCODE -eq 0 -and $result -eq 'true')
 }
+
+function Resolve-NetworkSecurityPerimeter {
+    <#
+        Returns the perimeter this resource group actually holds.
+
+        A perimeter cannot be renamed in place, so an estate built before the
+        default name changed still carries the old one. Creating the configured
+        name instead would leave the storage account associated with the first
+        perimeter and the access rules being written to the second, which reads
+        as a permissions problem and is not one.
+
+        Adoption only happens when the group holds exactly one perimeter, so
+        this can never silently pick between two estates.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $SubscriptionId,
+        [Parameter(Mandatory)][string] $ResourceGroup,
+        [Parameter(Mandatory)][string] $PreferredName,
+        [string] $ApiVersion = '2023-08-01-preview'
+    )
+
+    $url = "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/networkSecurityPerimeters?api-version=$ApiVersion"
+    $raw = & az rest --method GET --url $url 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return [pscustomobject]@{ Name = $PreferredName; Existing = $false; Adopted = $false; Candidates = @() }
+    }
+
+    $names = @(("$raw" | ConvertFrom-Json).value | ForEach-Object { $_.name })
+
+    if ($names -contains $PreferredName) {
+        return [pscustomobject]@{ Name = $PreferredName; Existing = $true; Adopted = $false; Candidates = $names }
+    }
+    if ($names.Count -eq 1) {
+        return [pscustomobject]@{ Name = $names[0]; Existing = $true; Adopted = $true; Candidates = $names }
+    }
+    return [pscustomobject]@{ Name = $PreferredName; Existing = $false; Adopted = $false; Candidates = $names }
+}
