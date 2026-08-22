@@ -160,6 +160,56 @@ The lane defaults to `ml`, which is why no `-Lane` appears above. In this lane t
 
 Record the identifiers it prints at the end.
 
+### Optional: a federated identity for CI
+
+Nothing in this lane needs a service principal. Create one only when you decide to
+hand this same state foundation to a pipeline. `./scripts/bootstrap.ps1
+-CreateServicePrincipal` does it as part of a lane bootstrap; the equivalent by
+hand, with an active Global Administrator role and Owner on the subscription:
+
+```powershell
+$repo  = '<owner>/<repository>'
+$subId = az account show --query id -o tsv
+
+$appId = az ad app create --display-name sp-fabric-bootstrap `
+    --sign-in-audience AzureADMyOrg --query appId -o tsv
+az ad sp create --id $appId | Out-Null
+
+# Resolve the app role IDs by name rather than pinning GUIDs
+$graph = az ad sp show --id 00000003-0000-0000-c000-000000000000 | ConvertFrom-Json
+foreach ($perm in 'Application.ReadWrite.All',
+                  'Group.ReadWrite.All',
+                  'DelegatedPermissionGrant.ReadWrite.All') {
+    $roleId = ($graph.appRoles | Where-Object { $_.value -eq $perm }).id
+    az ad app permission add --id $appId --api $graph.appId `
+        --api-permissions "$roleId=Role" --only-show-errors
+}
+az ad app permission admin-consent --id $appId
+
+az role assignment create --assignee $appId --role Owner `
+    --scope "/subscriptions/$subId" --only-show-errors | Out-Null
+
+@{
+    name      = 'github-bootstrap-main'
+    issuer    = 'https://token.actions.githubusercontent.com'
+    subject   = "repo:${repo}:ref:refs/heads/main"
+    audiences = @('api://AzureADTokenExchange')
+} | ConvertTo-Json | Set-Content fic.json
+az ad app federated-credential create --id $appId --parameters fic.json
+Remove-Item fic.json
+
+"AZURE_BOOTSTRAP_CLIENT_ID = $appId"
+```
+
+The credential goes in a file because `--parameters` takes inline JSON that Windows
+shells mangle on the way to `az`. If `admin-consent` fails immediately after
+`permission add`, wait a minute and re-run only that line; Entra has not finished
+propagating the permission request.
+
+There is no client secret, so nothing here expires or needs rotating. The
+identity is only useful alongside the GitHub Actions lane, which is described in
+[setup-github-actions.md](setup-github-actions.md).
+
 ### Update the backend configuration
 
 Set `storage_account_name` in all four files to match what you just created:
