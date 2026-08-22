@@ -75,6 +75,7 @@ $tenantId = Resolve-Value -Key 'AZURE_TENANT_ID' -AccountProperty 'tenantId'
 $subscriptionId = Resolve-Value -Key 'AZURE_SUBSCRIPTION_ID' -AccountProperty 'id'
 $cicdObjectId = Resolve-Value -Key 'FABRIC_CICD_SP_OBJECT_ID'
 $connectionId = Resolve-Value -Key 'FABRIC_GITHUB_CONNECTION_ID'
+$workspacePrefix = Resolve-Value -Key 'FABRIC_WORKSPACE_PREFIX'
 
 if (-not $tenantId -or -not $subscriptionId) {
     throw 'Could not determine tenant or subscription. Run `az login`, or set AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID in .env.'
@@ -90,6 +91,10 @@ if (-not $Lane) {
     $Lane = if ($values.ContainsKey('FABRIC_LANE') -and $values['FABRIC_LANE']) { $values['FABRIC_LANE'] } else { 'ml' }
 }
 if ($Lane -notin @('gh', 'ml')) { throw "FABRIC_LANE must be gh or ml, got '$Lane'." }
+
+if ($workspacePrefix -and $workspacePrefix -cnotmatch '^[a-z][a-z0-9-]{2,30}$') {
+    throw "FABRIC_WORKSPACE_PREFIX must be 3-31 lowercase characters starting with a letter, got '$workspacePrefix'."
+}
 
 # Terraform input variables. Same names the workflows pass.
 $env:TF_VAR_lane = $Lane
@@ -112,6 +117,15 @@ else {
     Remove-Item env:TF_VAR_github_connection_id -ErrorAction SilentlyContinue
 }
 
+# Absent means names derive from prefix and lane. Removed rather than left empty,
+# so a stale value from an earlier shell cannot rename the estate.
+if ($workspacePrefix) {
+    $env:TF_VAR_workspace_prefix = $workspacePrefix
+}
+else {
+    Remove-Item env:TF_VAR_workspace_prefix -ErrorAction SilentlyContinue
+}
+
 # Provider configuration. ARM_USE_OIDC is deliberately NOT set: locally the
 # providers authenticate with the Azure CLI session, and setting it would make
 # Terraform look for a GitHub token that does not exist.
@@ -119,6 +133,12 @@ $env:ARM_TENANT_ID = $tenantId
 $env:ARM_SUBSCRIPTION_ID = $subscriptionId
 
 Write-Host "  TF_VAR_lane                             = $($env:TF_VAR_lane)"
+if ($env:TF_VAR_workspace_prefix) {
+    Write-Host "  TF_VAR_workspace_prefix                 = $($env:TF_VAR_workspace_prefix)"
+}
+else {
+    Write-Host '  TF_VAR_workspace_prefix                 = (unset; names derive from prefix and lane)'
+}
 Write-Host "  TF_VAR_tenant_id                        = $($env:TF_VAR_tenant_id)"
 Write-Host "  TF_VAR_subscription_id                  = $($env:TF_VAR_subscription_id)"
 if ($env:TF_VAR_cicd_service_principal_object_id) {

@@ -48,12 +48,25 @@ else
   unset TF_VAR_github_connection_id
 fi
 
+# Absent means names derive from prefix and lane. Unset rather than left empty,
+# so a stale value from an earlier shell cannot rename the estate.
+if [[ -n "${FABRIC_WORKSPACE_PREFIX:-}" ]]; then
+  if [[ ! "$FABRIC_WORKSPACE_PREFIX" =~ ^[a-z][a-z0-9-]{2,30}$ ]]; then
+    echo "ERROR: FABRIC_WORKSPACE_PREFIX must be 3-31 lowercase characters starting with a letter" >&2
+    return 1
+  fi
+  export TF_VAR_workspace_prefix="$FABRIC_WORKSPACE_PREFIX"
+else
+  unset TF_VAR_workspace_prefix
+fi
+
 # Provider configuration. ARM_USE_OIDC is deliberately NOT set: locally the
 # providers authenticate with the Azure CLI session.
 export ARM_TENANT_ID="$AZURE_TENANT_ID"
 export ARM_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
 
 echo "Loaded $_env_file"
+echo "  TF_VAR_workspace_prefix                 = ${TF_VAR_workspace_prefix:-(unset; names derive from prefix and lane)}"
 echo "  TF_VAR_tenant_id                        = $TF_VAR_tenant_id"
 echo "  TF_VAR_subscription_id                  = $TF_VAR_subscription_id"
 echo "  TF_VAR_cicd_service_principal_object_id = $TF_VAR_cicd_service_principal_object_id"
