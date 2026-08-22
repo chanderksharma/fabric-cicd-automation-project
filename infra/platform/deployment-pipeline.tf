@@ -48,10 +48,14 @@ resource "fabric_deployment_pipeline" "this" {
 
 # Deploying between stages requires Admin on the pipeline, which is separate
 # from workspace roles.
+#
+# Fabric grants the creator Admin, and the creator is whichever principal
+# Terraform runs as, so assigning it again returns
+# DeploymentPipelineRoleAssignmentAlreadyExists. Only the durable group
+# assignment is managed here, matching the workspace root.
 resource "fabric_deployment_pipeline_role_assignment" "admins" {
   for_each = var.create_deployment_pipeline ? {
     platform_admins = data.azuread_group.platform_admins.object_id
-    cicd            = local.admin_principal_id
   } : {}
 
   deployment_pipeline_id = fabric_deployment_pipeline.this[0].id
@@ -59,6 +63,6 @@ resource "fabric_deployment_pipeline_role_assignment" "admins" {
 
   principal = {
     id   = each.value
-    type = each.key == "cicd" ? local.admin_principal_type : "Group"
+    type = "Group"
   }
 }
