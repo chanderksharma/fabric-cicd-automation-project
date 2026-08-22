@@ -207,18 +207,20 @@ A null service principal is not a fallback, it is the `ml` lane's identity model
 
 ## Promotion flow
 
-Branch names below are the `ml` lane defaults; a `workspace_prefix` replaces the
-`ml-` stem with its own.
+One branch per workspace, named after it. The stem is `<prefix>-<lane>` by
+default, or `workspace_prefix` when set, so the `ml` lane's branches are
+`ml-dev`, `ml-test` and `ml-prod` while a `my-contoso` prefix gives
+`my-contoso-dev` and so on.
 
 ```mermaid
 flowchart LR
     AUTHOR[Author in dev workspace] --> COMMIT[Commit from Fabric]
-    COMMIT --> DEVB[ml-dev branch]
-    DEVB --> PRT[PR to ml-test]
-    PRT --> TESTB[ml-test branch]
+    COMMIT --> DEVB[dev branch]
+    DEVB --> PRT[PR to test branch]
+    PRT --> TESTB[test branch]
     TESTB --> UFGT[updateFromGit on test]
-    TESTB --> PRP[PR to ml-prod]
-    PRP --> PRODB[ml-prod branch]
+    TESTB --> PRP[PR to prod branch]
+    PRP --> PRODB[prod branch]
     PRODB --> UFGP[updateFromGit on prod]
 ```
 
@@ -269,6 +271,10 @@ The provider does not model capacity state, so pausing creates no drift:
 az fabric capacity suspend --capacity-name contosofabmlshared --resource-group rg-contoso-fab-ml-fabric
 az fabric capacity resume  --capacity-name contosofabmlshared --resource-group rg-contoso-fab-ml-fabric
 ```
+
+Those names are the `ml` lane defaults. Read the real ones back with
+`terraform -chdir=infra/platform output capacity_names`, which is authoritative
+whatever `lane` and `workspace_prefix` are set to.
 
 By default the provider verifies the capacity is Active before touching a workspace, which fails while suspended. `skip_capacity_state_validation = true` is set for `dev` and deliberately left off for `test` and `prod`: with it enabled the provider can no longer detect an inactive capacity, and a later apply may drop workspace items from state.
 
