@@ -1,5 +1,0 @@
-dependencies:
-  - pip:
-      - great-expectations==0.18.19
-      - python-dateutil==2.9.0.post0
-name: env_shared

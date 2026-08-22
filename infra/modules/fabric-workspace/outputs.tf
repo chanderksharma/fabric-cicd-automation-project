@@ -1,5 +1,5 @@
 output "id" {
-  description = "Fabric workspace GUID. Consumed by fabric-cicd as the deployment target."
+  description = "Fabric workspace GUID."
   value       = fabric_workspace.this.id
 }
 

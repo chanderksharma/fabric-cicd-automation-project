@@ -111,5 +111,5 @@ if ($results) {
     Write-Host ""
     Write-Host "Workspaces:" -ForegroundColor Green
     $results | Format-Table -AutoSize
-    Write-Host "Pass a WorkspaceId to src/deploy.py to publish Fabric items into it."
+    Write-Host "Item content arrives through Git integration; commit to the branch each workspace syncs with."
 }

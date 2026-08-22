@@ -5,9 +5,3 @@
 /infra/                     @chandsharma_microsoft
 /.github/workflows/         @chandsharma_microsoft
 /scripts/                   @chandsharma_microsoft
-
-/workspace/                 @chandsharma_microsoft
-/src/                       @chandsharma_microsoft
-
-# Environment parameterisation affects prod.
-/workspace/parameter.yml    @chandsharma_microsoft

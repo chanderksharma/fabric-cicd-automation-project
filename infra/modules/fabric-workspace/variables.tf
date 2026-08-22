@@ -16,7 +16,7 @@ variable "display_name" {
 variable "description" {
   description = "Workspace description shown in the Fabric portal."
   type        = string
-  default     = "Managed by Terraform. Item content is deployed by fabric-cicd from source control."
+  default     = "Managed by Terraform. Item content arrives through Git integration."
 }
 
 variable "capacity_id" {

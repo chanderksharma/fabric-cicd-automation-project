@@ -1,12 +1,13 @@
 variable "git_integration" {
   description = <<-EOT
     Connects the workspace to a Git repository. Null disables Git integration,
-    which is the correct setting for any workspace that fabric-cicd deploys into.
+    which is the correct setting for a workspace that receives items some other
+    way.
 
     A workspace must never be both a Git source of truth and a CI/CD push target
     on the same branch: humans commit from the workspace, or automation pushes to
-    Git, never both. In this repository dev is Git-connected on its own branch,
-    while test and prod receive items from fabric-cicd only.
+    Git, never both. In this repository every environment syncs with its own
+    branch, and content promotes by merging one branch into the next.
 
       provider_type           "GitHub" or "AzureDevOps"
       owner_name              GitHub owner. GitHub only.

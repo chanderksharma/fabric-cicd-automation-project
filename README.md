@@ -360,7 +360,7 @@ Do not hand-author Fabric item folders. A `.platform` file alone is **not** a va
 
 Create items in the `dev` workspace, then commit **from** Fabric so the workspace writes a valid definition. It then promotes through `test` and `prod` by merging branches.
 
-The `workspace/` folder and `src/deploy.py` are left over from the fabric-cicd approach and are no longer used by any workflow.
+Item source lives in the separate items repository, never here. This repository owns infrastructure only.
 
 ## Action pinning
 
