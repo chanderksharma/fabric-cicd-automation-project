@@ -283,7 +283,35 @@ else {
 
     $SpObjectId = az ad sp list --filter "appId eq '$AppId'" --query '[0].id' -o tsv
     if (-not $SpObjectId) {
-        $SpObjectId = az ad sp create --id $AppId --query id -o tsv
+        # A just-created app registration is not visible to the service principal
+        # endpoint until Entra replicates it.
+        $arguments = @('ad', 'sp', 'create', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            $output = & az @arguments 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $SpObjectId = "$($output | Where-Object { $_ -is [string] } | Select-Object -Last 1)".Trim()
+                break
+            }
+
+            # The create can also fail after having succeeded.
+            $SpObjectId = az ad sp list --filter "appId eq '$AppId'" --query '[0].id' -o tsv
+            if ($SpObjectId) { break }
+
+            $message = $output -join [Environment]::NewLine
+            if ($attempt -eq 6 -or $message -notmatch '(?i)does not reference a valid application object|not found|does not exist|temporar|try again') {
+                throw "az $($arguments -join ' ') failed: $message"
+            }
+
+            $delaySeconds = 5 * $attempt
+            Write-Host "    '$AppName' is waiting for Entra propagation; retrying in ${delaySeconds}s"
+            Start-Sleep -Seconds $delaySeconds
+        }
+    }
+
+    # Everything below binds roles to this object id, and az reports a null one
+    # as an unrelated parameter binding error.
+    if (-not $SpObjectId) {
+        throw "Could not resolve the service principal object id for '$AppName'."
     }
 
     $graphAppId = '00000003-0000-0000-c000-000000000000'
