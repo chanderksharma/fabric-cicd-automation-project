@@ -32,7 +32,9 @@ The same code builds two independent estates in one tenant, selected by `var.lan
 
 `lane` defaults to `ml`, because a bare `terraform apply` is by definition the manual path. The workflows set `TF_VAR_lane: gh` explicitly, so a local run can never write to the lane CI owns.
 
-The lane must be in the branch name too. Two workspaces pointed at one branch do not share it, they overwrite each other on every sync.
+The names above are defaults. `workspace_prefix` replaces the whole `<prefix>-<lane>` stem: set it to `my-contoso` and the workspaces become `my-contoso-{dev,test,prod}`, syncing with branches of the same name, with the capacity, resource group, connection and deployment pipeline following. Bootstrap takes it as `-WorkspacePrefix`, or as the `workspace_prefix` input on `bootstrap.yml`. Choose it before the first apply: renaming a workspace later means destroying and recreating it, and the items go with it.
+
+The lane must be in the branch name too. Two workspaces pointed at one branch do not share it, they overwrite each other on every sync. A `workspace_prefix` satisfies this on its own, provided the two lanes are given different values.
 
 Shared between lanes on purpose: the state storage account, the network security perimeter, and the three Entra security groups. Groups describe people, and the same people administer both; duplicating them is two objects to keep in step for no isolation gain.
 
@@ -48,7 +50,8 @@ An empty lane (`lane = ""`) reproduces the unsuffixed names that predate lanes. 
 |   `-- workflows/
 |       |-- bootstrap.yml             # seed credentials -> state, OIDC, environments, first apply
 |       |-- terraform-plan.yml        # PR: fmt, validate, tflint, checkov, plan, PR comment
-|       `-- terraform-apply.yml       # main: platform -> dev -> test -> prod -> pipeline
+|       |-- terraform-apply.yml       # main: platform -> dev -> test -> prod -> pipeline
+|       `-- terraform-destroy.yml     # dispatch-only: dismantles the gh lane
 |-- docs/
 |   |-- setup-manual-cli.md           # build and run the ml lane from a workstation
 |   `-- setup-github-actions.md       # build and run the gh lane from CI
@@ -176,8 +179,9 @@ No Terraform variable is required. Identity values resolve from the current sess
 | `tenant_id` | Tenant of the `az login` or OIDC session |
 | `subscription_id` | Subscription of the current session |
 | `cicd_service_principal_object_id` | Whoever is running Terraform |
+| `workspace_prefix` | `<prefix>-<lane>`, so workspaces are `<prefix>-<lane>-<environment>` |
 | `capacity_display_name` | `<prefix>-<lane>-<capacity_key>` |
-| `git_branch_name` | `<lane>-<environment>` |
+| `git_branch_name` | `<workspace_prefix>-<environment>`, or `<lane>-<environment>` when no prefix is set |
 | `github_connection_name` | `<prefix>-<lane>-items` |
 
 A null service principal is not a fallback, it is the `ml` lane's identity model: there is no CI principal, so the operator holds the standing access. An unused app registration with Contributor and User Access Administrator on the subscription is a liability rather than an asset.
@@ -185,6 +189,9 @@ A null service principal is not a fallback, it is the `ml` lane's identity model
 `.env` follows the same rule. Every key can be blank, and blanks are resolved from `az login`. An untouched copy of `.env.example` is a working configuration for the `ml` lane.
 
 ## Promotion flow
+
+Branch names below are the `ml` lane defaults; a `workspace_prefix` replaces the
+`ml-` stem with its own.
 
 ```mermaid
 flowchart LR

@@ -388,6 +388,9 @@ that no longer exists.
 To avoid the cycle entirely, leave the three groups out of teardown. They hold no
 Azure resources, cost nothing, and are shared with the GitHub Actions lane.
 
+If the estate used a `workspace_prefix`, supply the same value when you rebuild.
+A different one builds a second estate beside the first rather than replacing it.
+
 ## Day-to-day
 
 ```powershell
@@ -429,6 +432,14 @@ Use the script. It handles an ordering constraint that is easy to get wrong by h
 ```powershell
 ./scripts/Remove-Platform.ps1 -Lane ml -IncludeBranches -WhatIf   # preview
 ./scripts/Remove-Platform.ps1 -Lane ml -IncludeBranches
+```
+
+If the lane was built with a prefix, pass the same one. The script matches
+resources and branches by name, so without it the sweep finds nothing and
+reports a clean teardown over an estate that is still standing:
+
+```powershell
+./scripts/Remove-Platform.ps1 -Lane ml -WorkspacePrefix my-contoso -IncludeBranches -WhatIf
 ```
 
 Without `-Force` it asks you to type the lane name before doing anything. `-WhatIf` never prompts, because it destroys nothing.

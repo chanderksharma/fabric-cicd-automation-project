@@ -353,6 +353,10 @@ that no longer exists.
 To avoid the whole cycle, leave the three groups out of teardown. They hold no
 Azure resources and are shared with the manual lane.
 
+If the estate used a `workspace_prefix`, enter the same value when you re-run
+bootstrap. A different one builds a second estate beside the first rather than
+replacing it.
+
 ## What bootstrap creates
 
 | Layer | Result |
@@ -360,7 +364,7 @@ Azure resources and are shared with the manual lane.
 | State | Storage account, `tfstate-gh` container, network security perimeter and deletion lock |
 | Identity | `sp-fabric-cicd-gh`, six federated credentials and Azure RBAC |
 | Entra ID | Platform admin, data engineer and analyst groups when absent |
-| Source | Items repository with `gh-dev`, `gh-test` and `gh-prod` branches |
+| Source | Items repository with one branch per workspace, `gh-{dev,test,prod}` unless `workspace_prefix` was set |
 | GitHub | Four environments, protection rules and repository/environment variables |
 | Fabric | Tenant settings after delegated approval |
 | Deployment | Dispatch of `terraform-apply.yml` |
@@ -394,6 +398,8 @@ After bootstrap, every infrastructure change follows a pull request. [terraform-
 Open the merged commit's `terraform-apply` run under the repository's **Actions** tab. Confirm all five jobs succeeded and that the protected environments recorded the expected approvals.
 
 In the Fabric portal, confirm that the `contoso-fab-gh-dev`, `contoso-fab-gh-test` and `contoso-fab-gh-prod` workspaces exist and each reports `ConnectedAndInitialized` under Git integration. Confirm that `contoso-fab-gh-release` contains all three assigned stages.
+
+If bootstrap ran with a `workspace_prefix`, substitute it: `my-contoso-dev` and so on, with the pipeline at `my-contoso-release`.
 
 ## Troubleshooting CI
 
@@ -435,6 +441,10 @@ Run the destroy locally rather than through CI, so an approval gate cannot leave
 ./scripts/Remove-Platform.ps1 -Lane gh -IncludeBranches -WhatIf   # preview
 ./scripts/Remove-Platform.ps1 -Lane gh -IncludeBranches
 ```
+
+Add `-WorkspacePrefix my-contoso` if bootstrap ran with one. The script matches
+by name, so without it the sweep finds nothing and reports a clean teardown over
+an estate that is still standing.
 
 It deletes the deployment pipeline before the workspaces, because Fabric refuses to delete a workspace assigned to a pipeline stage. It then sweeps for anything named `contoso-fab-gh-*` that Terraform lost track of, and removes `sp-fabric-cicd-gh` with its federated credentials.
 
