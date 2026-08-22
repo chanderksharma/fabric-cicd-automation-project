@@ -250,11 +250,17 @@ identity running this script. Pass the object ID instead to skip the lookup.
             continue
         }
 
-        if ((Invoke-AzQuiet @('ad', 'group', 'member', 'add', '--group', $adminOid, '--member-id', $memberOid, '-o', 'none')) -eq 0) {
+        $addOutput = & az ad group member add --group $adminOid --member-id $memberOid -o none 2>&1
+        if ($LASTEXITCODE -eq 0) {
             Write-Host "    added $member to $AdminGroup"
         }
         else {
-            throw "Could not add '$member' to $AdminGroup. The bootstrap identity needs directory write permission."
+            $global:LASTEXITCODE = 0
+            throw @"
+Could not add '$member' to $AdminGroup. $(($addOutput | Out-String).Trim())
+Writing group membership needs Microsoft Graph GroupMember.ReadWrite.All or
+Group.ReadWrite.All, admin-consented on the identity running this script.
+"@
         }
     }
 }
@@ -430,11 +436,23 @@ else {
 
     $adminOid = az ad group list --display-name $AdminGroup --query '[0].id' -o tsv
     if ($adminOid) {
-        if ((Invoke-AzQuiet @('ad', 'group', 'member', 'add', '--group', $adminOid, '--member-id', $SpObjectId, '-o', 'none')) -eq 0) {
-            Write-Host "    added deployment principal to $AdminGroup"
+        # Checking first, because a refused write and an existing membership are
+        # not the same thing and used to report identically.
+        $isMember = az ad group member check --group $adminOid --member-id $SpObjectId --query value -o tsv 2>$null
+        if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0 }
+
+        if ($isMember -eq 'true') {
+            Write-Host "    (deployment principal is already in $AdminGroup)"
         }
         else {
-            Write-Host "    (deployment principal is already in $AdminGroup)"
+            $addOutput = & az ad group member add --group $adminOid --member-id $SpObjectId -o none 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    added deployment principal to $AdminGroup"
+            }
+            else {
+                $global:LASTEXITCODE = 0
+                Write-Host "    WARNING could not add the deployment principal to ${AdminGroup}: $(($addOutput | Out-String).Trim())" -ForegroundColor Yellow
+            }
         }
     }
 }
