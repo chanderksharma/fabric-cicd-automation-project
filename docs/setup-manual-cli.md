@@ -1,16 +1,6 @@
----
-title: Manual Setup with Azure CLI and Terraform
-description: Step-by-step build of the Microsoft Fabric platform from an empty subscription using local tooling, for an operator with Global Administrator and subscription Owner.
-author: Fabric Platform Team
-ms.date: 2026-08-22
-ms.topic: how-to
-keywords:
-  - microsoft fabric
-  - terraform
-  - azure cli
-  - setup
-estimated_reading_time: 26
----
+# Manual Setup with Azure CLI and Terraform
+
+Step-by-step build of the Microsoft Fabric platform from an empty subscription using local tooling, for an operator with Global Administrator and subscription Owner.
 
 ## Who this is for
 
