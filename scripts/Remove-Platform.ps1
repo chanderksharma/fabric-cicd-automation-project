@@ -552,4 +552,8 @@ Not removed by any script:
 =============================================================================
 "@
 
+# Tolerated non-zero exits (an absent branch, a resource group already gone) leave
+# $LASTEXITCODE set, and CI reads that as the result unless the script is explicit.
 if ($script:Failed.Count) { exit 1 }
+
+exit 0
