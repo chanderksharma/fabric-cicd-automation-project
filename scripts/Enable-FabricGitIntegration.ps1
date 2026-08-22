@@ -5,25 +5,21 @@
 .DESCRIPTION
     Run with no arguments. It handles everything internally:
 
-      1. Acquires a token for the Fabric admin API. A service principal is
-         authorised by the admin-API tenant settings rather than by a delegated
-         scope, so CI can use the identity it already signed in with. A user
-         needs Tenant.ReadWrite.All, and the Azure CLI's own app only requests
-         user_impersonation, so that path signs in with a device code through an
-         app registration this script creates and consents.
-      2. Finds the Git integration settings by inspecting the live list rather
+      1. Ensures an app registration exists with the delegated Power BI Service
+         scope Tenant.ReadWrite.All, and grants admin consent. The Azure CLI's
+         own app only requests user_impersonation, so `az rest` cannot reach
+         /v1/admin/* no matter which directory roles the caller holds.
+      2. Signs in with a device code through that app.
+      3. Finds the Git integration settings by inspecting the live list rather
          than assuming an API name.
-      3. Enables them, scoped to a security group.
+      4. Enables them, scoped to a security group.
 
-    The caller must be Fabric Administrator, Power BI Administrator or Global
-    Administrator, or a service principal already allowed to call the admin
-    APIs. These settings are tenant-wide, so they are scoped to a group by
-    default rather than the whole organisation.
+    The signed-in user must be Fabric Administrator, Power BI Administrator or
+    Global Administrator. These settings are tenant-wide, so they are scoped to
+    a group by default rather than the whole organisation.
 
-    The first run in a tenant has to be interactive. A service principal reaches
-    the admin API only after an administrator enables the two admin API service
-    principal settings in the admin portal, which this script does not manage:
-    they grant tenant-wide metadata access and are a deliberate decision.
+    This is an interactive step and CI does not run it. A service principal is
+    refused by the admin API even with the admin API tenant settings enabled.
 
 .EXAMPLE
     ./scripts/Enable-FabricGitIntegration.ps1
@@ -35,44 +31,28 @@
     ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -WhatIf
 
 .EXAMPLE
-    # Grant CI unattended access. Run once, interactively, as a Fabric admin.
+    # Re-scope the settings onto the current groups after a rebuild.
     ./scripts/Enable-FabricGitIntegration.ps1 `
         -IncludeServicePrincipal `
-        -IncludeAdminApiAccess `
-        -PrincipalObjectId <deployment-sp-object-id>, <bootstrap-sp-object-id>
-
-.EXAMPLE
-    # Unattended, once a service principal is allowed to call the admin API.
-    ./scripts/Enable-FabricGitIntegration.ps1 -Auth ServicePrincipal -IncludeServicePrincipal
+        -PrincipalObjectId <deployment-sp-object-id>
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string] $SecurityGroup = 'sg-fabric-platform-admins',
 
     # Optional principals whose membership in SecurityGroup must be verified.
-    # Bootstrap passes the permanent deployment service principal here; add the
-    # bootstrap principal too when granting admin API access.
+    # Bootstrap passes the permanent deployment service principal here.
     [string[]] $PrincipalObjectId = @(),
 
     # Also enable the settings that let a service principal call Fabric APIs,
     # which CI needs.
     [switch] $IncludeServicePrincipal,
 
-    # Also enable the two admin API switches, without which a service principal
-    # cannot run this script unattended. They grant the allowed group tenant-wide
-    # metadata access, so opt in deliberately.
-    [switch] $IncludeAdminApiAccess,
-
     # Show the matching settings and their state, change nothing.
     [switch] $List,
 
     # Apply tenant-wide instead of scoping to a security group.
     [switch] $WholeTenant,
-
-    # How the admin API is reached. Auto tries the signed-in identity first,
-    # which is what lets CI run unattended, then falls back to a device code.
-    [ValidateSet('Auto', 'ServicePrincipal', 'DeviceCode')]
-    [string] $Auth = 'Auto',
 
     [string] $AppName = 'fabric-admin-cli',
     [string] $TenantId
@@ -93,44 +73,16 @@ if (-not $TenantId) { $TenantId = az account show --query tenantId -o tsv }
 # --------------------------------------------------------------------------
 # 1. A token for the admin API
 # --------------------------------------------------------------------------
-function Test-AdminApiReachable {
-    param([Parameter(Mandatory)][string] $Token)
-
-    try {
-        Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers @{ Authorization = "Bearer $Token" } | Out-Null
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
-
+# Only a signed-in Fabric administrator can do this. A service principal is
+# refused even with the admin API tenant settings enabled, so this script is
+# interactive by design and CI does not run it.
 $accessToken = $null
 
-if ($Auth -ne 'DeviceCode') {
-    # An app-only token carries no delegated scope; Fabric authorises it through
-    # the service principal admin-API tenant settings instead.
-    $sessionToken = az account get-access-token --resource $FabricResource --query accessToken -o tsv 2>$null
-    if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $sessionToken = $null }
-
-    if ($sessionToken -and (Test-AdminApiReachable -Token $sessionToken)) {
-        $accessToken = $sessionToken
-        Write-Host 'Using the signed-in identity; the admin API accepted its token.'
-    }
-    elseif ($Auth -eq 'ServicePrincipal') {
-        throw "The signed-in identity cannot reach $AdminRoot. A Fabric administrator has to enable 'Service principals can access read-only admin APIs' and 'Service principals can access admin APIs used for updates' for a security group this identity belongs to. Those switches are not among the settings this script manages."
-    }
-    else {
-        Write-Host 'The signed-in identity cannot reach the admin API; falling back to device code.'
-    }
+if ($env:CI -or $env:TF_IN_AUTOMATION) {
+    throw 'This script needs an interactive Fabric administrator and cannot run unattended. Run it from a workstation, then re-run the workflow with configure_tenant_settings disabled.'
 }
 
 if (-not $accessToken) {
-    # Device code needs a human; CI would otherwise wait here until it expired.
-    if ($env:CI -or $env:TF_IN_AUTOMATION) {
-        throw 'Device code sign-in cannot run unattended. Run this script from a workstation as a Fabric administrator, or re-run the workflow with configure_tenant_settings disabled. Unattended runs additionally need a Fabric administrator to enable the two admin API service principal settings in the admin portal; this script does not manage those.'
-    }
-
     # ----------------------------------------------------------------------
     # App registration with the admin scope
     # ----------------------------------------------------------------------
@@ -290,23 +242,6 @@ if ($IncludeServicePrincipal) {
         'ServicePrincipalAccessGlobalAPIs'
         'ServicePrincipalAccessPermissionAPIs'
     )
-}
-
-# These two are matched on title: their API names are not documented, and
-# guessing one would silently enable the wrong tenant-wide switch.
-if ($IncludeAdminApiAccess) {
-    foreach ($title in @(
-            'Service principals can access read-only admin APIs'
-            'Service principals can access admin APIs used for updates'
-        )) {
-        $matched = @($all | Where-Object {
-                $_.PSObject.Properties.Name -contains 'title' -and $_.title -eq $title
-            })
-        if ($matched.Count -ne 1) {
-            throw "Expected exactly one tenant setting titled '$title', found $($matched.Count). Enable it in the Fabric admin portal instead."
-        }
-        $requiredSettingNames += $matched[0].settingName
-    }
 }
 
 $settingsByName = @{}

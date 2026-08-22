@@ -38,9 +38,9 @@ on:
         default: ''
         type: string
       configure_tenant_settings:
-        description: Run interactive Fabric administrator consent in this job
+        description: Attempt the Fabric tenant settings here. Off by default; it needs a Fabric administrator signed in interactively
         required: true
-        default: true
+        default: false
         type: boolean
       propagation_wait_seconds:
         description: Wait after changing Fabric tenant settings

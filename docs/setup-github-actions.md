@@ -86,13 +86,33 @@ This is the only interactive action. If the required Git and service-principal t
 
 The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it.
 
+## Enable the Fabric tenant settings
+
+This is a manual step. Fabric's admin API accepts only a signed-in administrator
+here, so the workflow leaves `configure_tenant_settings` off and CI never runs
+it. From a workstation, signed in as a Fabric administrator:
+
+```powershell
+az login
+./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal
+```
+
+The script signs in with a device code, finds the Git integration settings in the
+live list and scopes them to `sg-fabric-platform-admins`. Allow up to 15 minutes
+for the change to reach the workspaces.
+
+Repeat it whenever the security groups are recreated. Fabric stores the group
+object ID, not its name, so a rebuilt group leaves a stale reference behind and
+the settings stop applying. The script drops references to groups that no longer
+exist and rewrites the current ones.
+
 ## Run bootstrap
 
 1. Merge [bootstrap.yml](../.github/workflows/bootstrap.yml) into the default branch.
 2. Add the three bootstrap variables and two secrets under **Settings > Secrets and variables > Actions**.
 3. Open **Actions > bootstrap > Run workflow**.
 4. Choose the state account, region, items repository and environment reviewer.
-5. Complete the Fabric device authorization if requested.
+5. Enable the Fabric tenant settings manually, as described above.
 6. Approve the protected jobs in the dispatched `terraform-apply` run.
 7. Remove `BOOTSTRAP_GITHUB_TOKEN` and revoke the bootstrap federation if it is no longer needed.
 
