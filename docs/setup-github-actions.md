@@ -78,6 +78,53 @@ It is used only by `bootstrap.yml`.
 3. Assign it **Owner** on the target subscription.
 4. Add the federated credential described under [Trust boundary](#trust-boundary).
 
+All four steps in one pass, with an active Global Administrator role and Owner on
+the subscription:
+
+```powershell
+$repo  = '<owner>/<repository>'
+$subId = az account show --query id -o tsv
+
+$appId = az ad app create --display-name sp-fabric-bootstrap `
+    --sign-in-audience AzureADMyOrg --query appId -o tsv
+az ad sp create --id $appId | Out-Null
+
+# Resolve the app role IDs by name rather than pinning GUIDs
+$graph = az ad sp show --id 00000003-0000-0000-c000-000000000000 | ConvertFrom-Json
+foreach ($perm in 'Application.ReadWrite.All',
+                  'Group.ReadWrite.All',
+                  'DelegatedPermissionGrant.ReadWrite.All') {
+    $roleId = ($graph.appRoles | Where-Object { $_.value -eq $perm }).id
+    az ad app permission add --id $appId --api $graph.appId `
+        --api-permissions "$roleId=Role" --only-show-errors
+}
+az ad app permission admin-consent --id $appId
+
+az role assignment create --assignee $appId --role Owner `
+    --scope "/subscriptions/$subId" --only-show-errors | Out-Null
+
+@{
+    name      = 'github-bootstrap-main'
+    issuer    = 'https://token.actions.githubusercontent.com'
+    subject   = "repo:${repo}:ref:refs/heads/main"
+    audiences = @('api://AzureADTokenExchange')
+} | ConvertTo-Json | Set-Content fic.json
+az ad app federated-credential create --id $appId --parameters fic.json
+Remove-Item fic.json
+
+"AZURE_BOOTSTRAP_CLIENT_ID = $appId"
+```
+
+The credential goes in a file because `--parameters` takes inline JSON that
+Windows shells mangle on the way to `az`. If `admin-consent` fails immediately
+after `permission add`, wait a minute and re-run only that line; Entra has not
+finished propagating the permission request.
+
+Feed the printed client ID, your tenant ID and subscription ID into the
+repository variables listed under [Trust boundary](#trust-boundary). If the
+repository has immutable subjects enabled, use the `@owner-id` subject form shown
+there instead.
+
 `AppRoleAssignment.ReadWrite.All` is optional and best left off. Bootstrap uses it
 when present to grant the deployment application `Directory.Read.All`; nothing
 depends on that succeeding. It also lets its holder assign any application
