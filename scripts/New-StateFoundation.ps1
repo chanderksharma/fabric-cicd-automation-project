@@ -413,7 +413,10 @@ foreach ($container in $containers) {
         }
 
         $text = "$output"
-        if ($text -match 'blocked by network rules|public network access|not authorized to perform this operation using this permission') {
+        # Storage answers a blocked data plane with ResourceNotFound rather than
+        # 403, so an account created moments ago looks absent until the perimeter
+        # association propagates.
+        if ($text -match 'blocked by network rules|public network access|not authorized to perform this operation using this permission|specified resource does not exist|ResourceNotFound') {
             Write-Host "    ${container}: attempt ${attempt}/20 blocked by network or RBAC, retrying in 20s"
             Start-Sleep -Seconds 20
         }
