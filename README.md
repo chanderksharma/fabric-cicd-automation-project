@@ -90,6 +90,8 @@ An empty lane (`lane = ""`) reproduces the unsuffixed names that predate lanes. 
 |   |-- StateAccountHelpers.ps1       # shared, dot-sourced
 |   |-- bootstrap.ps1                 # once per lane: groups, app registration, RBAC
 |   |-- bootstrap.sh
+|   |-- Add-MeToFabricGroups.ps1      # join the groups Terraform grants roles to
+|   |-- add-me-to-fabric-groups.sh
 |   |-- Load-Env.ps1                  # dot-source; .env -> TF_VAR_*
 |   |-- load-env.sh
 |   |-- Apply-Workspaces.ps1          # dev, test, prod with correct init pairing

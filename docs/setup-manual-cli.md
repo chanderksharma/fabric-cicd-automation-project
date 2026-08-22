@@ -350,6 +350,16 @@ individuals, so a person gains access by joining a group. Until then the
 workspaces are invisible to them, including to you: bootstrap adds the identity
 that ran it, which is not necessarily your user account.
 
+Find the group and add yourself:
+
+```powershell
+./scripts/Add-MeToFabricGroups.ps1
+```
+
+It checks membership before writing, so re-running it after a rebuild is safe.
+Add `-All` to join the engineer and analyst groups as well. The equivalent by
+hand, or if you prefer to see the calls:
+
 ```powershell
 $adminGroup = az ad group list --display-name sg-fabric-platform-admins --query '[0].id' -o tsv
 az ad group member add --group $adminGroup --member-id (az ad signed-in-user show --query id -o tsv)
