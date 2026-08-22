@@ -1,4 +1,13 @@
 locals {
+  # Reading the directory is the only thing the deployment identity needs a
+  # Microsoft Graph permission for. Supplying the group object ID removes it.
+  # An unset GitHub Actions variable arrives as "", not null.
+  lookup_directory = coalesce(var.platform_admin_group_object_id, "") == ""
+
+  platform_admin_group_object_id = local.lookup_directory ? data.azuread_group.platform_admins[0].object_id : var.platform_admin_group_object_id
+
+  caller_user_principal_names = local.lookup_directory ? data.azuread_users.caller[0].user_principal_names : []
+
   # Single source of naming truth. Everything a lane owns hangs off this, so
   # the gh and ml builds never contend for the same Azure or Fabric object.
   # An empty lane reproduces the pre-lane names, which is what lets destroy
@@ -18,7 +27,7 @@ locals {
   )
 
   admin_principal_type = var.cicd_service_principal_object_id != null ? "ServicePrincipal" : (
-    length(data.azuread_users.caller.user_principal_names) > 0 ? "User" : "ServicePrincipal"
+    length(local.caller_user_principal_names) > 0 ? "User" : "ServicePrincipal"
   )
 
   base_tags = merge(var.tags, {
@@ -37,8 +46,8 @@ locals {
   # by UPN rather than object ID for the same reason.
   common_capacity_admins = concat(
     var.cicd_service_principal_object_id == null ? [] : [var.cicd_service_principal_object_id],
-    data.azuread_users.caller.user_principal_names,
-    data.azuread_users.platform_admins.user_principal_names,
+    local.caller_user_principal_names,
+    local.lookup_directory ? data.azuread_users.platform_admins[0].user_principal_names : [],
     var.platform_admin_upns,
   )
 
@@ -76,7 +85,7 @@ locals {
       platform_admins_owner = {
         scope                = azurerm_resource_group.fabric.id
         role_definition_name = "Reader"
-        principal_id         = data.azuread_group.platform_admins.object_id
+        principal_id         = local.platform_admin_group_object_id
         principal_type       = "Group"
         description          = "Platform admins observe capacity state; changes go through CI/CD."
       }
@@ -85,7 +94,7 @@ locals {
       for key, cap in local.capacities : "platform_admins_capacity_${key}" => {
         scope                = module.capacity[key].id
         role_definition_name = "Contributor"
-        principal_id         = data.azuread_group.platform_admins.object_id
+        principal_id         = local.platform_admin_group_object_id
         principal_type       = "Group"
         description          = "Break-glass pause/resume and scale of the ${key} capacity."
       }

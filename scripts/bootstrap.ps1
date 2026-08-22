@@ -163,6 +163,7 @@ function Confirm-Group {
 
     $oid = az ad group list --display-name $Name --query '[0].id' -o tsv 2>$null
     if ($oid) {
+        $GroupObjectIds[$Name] = $oid
         Write-Host "    exists   $Name  ($oid)"
         return $true
     }
@@ -171,14 +172,26 @@ function Confirm-Group {
         return $false
     }
     $oid = az ad group create --display-name $Name --mail-nickname $Name --query id -o tsv
+    $GroupObjectIds[$Name] = $oid
     Write-Host "    created  $Name  ($oid)"
     return $true
 }
 
 Write-Host '==> Checking Entra security groups'
+$GroupObjectIds = @{}
 $groupsOk = $true
 foreach ($g in @($AdminGroup, $EngineerGroup, $AnalystGroup)) {
     if (-not (Confirm-Group -Name $g)) { $groupsOk = $false }
+}
+
+# Terraform takes these as inputs so the deployment identity never has to read
+# the directory.
+if ($groupsOk -and $env:GITHUB_ENV) {
+    @(
+        "FABRIC_ADMIN_GROUP_ID=$($GroupObjectIds[$AdminGroup])"
+        "FABRIC_ENGINEER_GROUP_ID=$($GroupObjectIds[$EngineerGroup])"
+        "FABRIC_ANALYST_GROUP_ID=$($GroupObjectIds[$AnalystGroup])"
+    ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
 }
 
 if ($CreateGroups) {

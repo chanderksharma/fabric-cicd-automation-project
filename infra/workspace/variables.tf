@@ -91,6 +91,28 @@ variable "analyst_group_name" {
   default     = "sg-fabric-analysts"
 }
 
+variable "group_object_ids" {
+  description = <<-EOT
+    Object IDs of the three security groups, keyed platform_admins, data_engineers
+    and analysts.
+
+    Supplying them is what lets the deployment identity run without any Microsoft
+    Graph permission: the group display-name lookups are the only reason this root
+    reads the directory. Bootstrap resolves the groups already and publishes them.
+
+    Leave empty to look the groups up by name, which requires Directory.Read.All.
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for k, v in var.group_object_ids : v == "" || can(regex("^[0-9a-fA-F-]{36}$", v))
+    ])
+    error_message = "Each group_object_ids value must be a GUID, or empty to look the group up by name."
+  }
+}
+
 variable "enable_workspace_identity" {
   description = "Create a workspace managed identity for OneLake shortcuts and trusted workspace access."
   type        = bool

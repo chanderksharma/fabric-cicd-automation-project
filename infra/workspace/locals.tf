@@ -36,11 +36,18 @@ locals {
 
   human_roles = merge(local.default_human_roles[var.environment], var.role_overrides)
 
-  group_object_ids = {
-    platform_admins = data.azuread_group.platform_admins.object_id
-    data_engineers  = data.azuread_group.data_engineers.object_id
-    analysts        = data.azuread_group.analysts.object_id
-  }
+  # An unset GitHub Actions variable arrives as "", so a partially populated map
+  # still falls back to looking the groups up by name.
+  lookup_groups = length([
+    for k in ["platform_admins", "data_engineers", "analysts"] : k
+    if lookup(var.group_object_ids, k, "") != ""
+  ]) < 3
+
+  group_object_ids = local.lookup_groups ? {
+    platform_admins = data.azuread_group.platform_admins[0].object_id
+    data_engineers  = data.azuread_group.data_engineers[0].object_id
+    analysts        = data.azuread_group.analysts[0].object_id
+  } : var.group_object_ids
 
   # Fabric automatically grants the workspace creator Admin. Managing that
   # same principal again returns PrincipalAlreadyHasWorkspaceRolePermissions.

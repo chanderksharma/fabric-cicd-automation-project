@@ -6,11 +6,15 @@ data "azuread_client_config" "current" {}
 # it is a service principal. That difference is what lets the same configuration
 # serve a local operator and a CI principal without being told which it is.
 data "azuread_users" "caller" {
+  count = local.lookup_directory ? 1 : 0
+
   object_ids     = [data.azuread_client_config.current.object_id]
   ignore_missing = true
 }
 
 data "azuread_group" "platform_admins" {
+  count = local.lookup_directory ? 1 : 0
+
   display_name     = var.platform_admin_group_name
   security_enabled = true
 }
@@ -21,7 +25,9 @@ data "azuread_group" "platform_admins" {
 # principal names the API will accept. ignore_missing skips any member that is
 # not a user, such as a nested group or a service principal.
 data "azuread_users" "platform_admins" {
-  object_ids     = data.azuread_group.platform_admins.members
+  count = local.lookup_directory ? 1 : 0
+
+  object_ids     = data.azuread_group.platform_admins[0].members
   ignore_missing = true
 }
 

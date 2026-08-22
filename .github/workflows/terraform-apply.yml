@@ -64,6 +64,8 @@ jobs:
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+      TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
       TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
     steps:
       - name: Checkout
@@ -157,6 +159,8 @@ jobs:
       FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+      TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
@@ -236,6 +240,8 @@ jobs:
       FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+      TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
@@ -315,6 +321,8 @@ jobs:
       FABRIC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+      TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
       TF_VAR_github_connection_id: ${{ needs.apply-platform.outputs.github_connection_id }}
     steps:
       - name: Checkout
@@ -392,6 +400,8 @@ jobs:
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+      TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+      TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
       TF_VAR_github_pat: ${{ secrets.FABRIC_GITHUB_PAT }}
     steps:
       - name: Checkout

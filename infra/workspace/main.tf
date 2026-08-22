@@ -1,14 +1,20 @@
 data "azuread_group" "platform_admins" {
+  count = local.lookup_groups ? 1 : 0
+
   display_name     = var.platform_admin_group_name
   security_enabled = true
 }
 
 data "azuread_group" "data_engineers" {
+  count = local.lookup_groups ? 1 : 0
+
   display_name     = var.data_engineer_group_name
   security_enabled = true
 }
 
 data "azuread_group" "analysts" {
+  count = local.lookup_groups ? 1 : 0
+
   display_name     = var.analyst_group_name
   security_enabled = true
 }

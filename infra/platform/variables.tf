@@ -129,6 +129,28 @@ variable "platform_admin_group_name" {
   default     = "sg-fabric-platform-admins"
 }
 
+variable "platform_admin_group_object_id" {
+  description = <<-EOT
+    Object ID of the platform admin group.
+
+    Supplying it is what lets the deployment identity run without any Microsoft
+    Graph permission: the directory lookups are the only reason this root reads
+    Entra. Bootstrap resolves the group already and publishes the ID.
+
+    When set, group membership is no longer expanded into capacity
+    administrators, so list any human capacity admin in platform_admin_upns.
+
+    Null looks the group up by display name, which requires Directory.Read.All.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = coalesce(var.platform_admin_group_object_id, "") == "" || can(regex("^[0-9a-fA-F-]{36}$", var.platform_admin_group_object_id))
+    error_message = "platform_admin_group_object_id must be a GUID, or empty to look the group up by name."
+  }
+}
+
 variable "platform_admin_upns" {
   description = "Optional additional capacity administrators expressed as user principal names. Prefer the admin group; use this only for break-glass accounts."
   type        = list(string)

@@ -47,6 +47,8 @@ env:
   TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
   TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   TF_VAR_cicd_service_principal_object_id: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+  TF_VAR_platform_admin_group_object_id: ${{ vars.FABRIC_ADMIN_GROUP_ID }}
+  TF_VAR_group_object_ids: '{"platform_admins":"${{ vars.FABRIC_ADMIN_GROUP_ID }}","data_engineers":"${{ vars.FABRIC_ENGINEER_GROUP_ID }}","analysts":"${{ vars.FABRIC_ANALYST_GROUP_ID }}"}'
   # Keeps the connection resource in the platform plan without exposing a PAT.
   # The value is never applied by this workflow.
   TF_VAR_github_pat: plan-only-placeholder

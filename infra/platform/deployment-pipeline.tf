@@ -55,7 +55,7 @@ resource "fabric_deployment_pipeline" "this" {
 # assignment is managed here, matching the workspace root.
 resource "fabric_deployment_pipeline_role_assignment" "admins" {
   for_each = var.create_deployment_pipeline ? {
-    platform_admins = data.azuread_group.platform_admins.object_id
+    platform_admins = local.platform_admin_group_object_id
   } : {}
 
   deployment_pipeline_id = fabric_deployment_pipeline.this[0].id
