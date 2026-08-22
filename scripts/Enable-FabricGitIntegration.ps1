@@ -5,18 +5,23 @@
 .DESCRIPTION
     Run with no arguments. It handles everything internally:
 
-      1. Ensures an app registration exists with the delegated Power BI Service
-         scope Tenant.ReadWrite.All, and grants admin consent. The Azure CLI's
-         own app only requests user_impersonation, so `az rest` cannot reach
-         /v1/admin/* no matter which directory roles the caller holds.
-      2. Signs in with a device code through that app.
-      3. Finds the Git integration settings by inspecting the live list rather
+      1. Acquires a token for the Fabric admin API. A service principal is
+         authorised by the admin-API tenant settings rather than by a delegated
+         scope, so CI can use the identity it already signed in with. A user
+         needs Tenant.ReadWrite.All, and the Azure CLI's own app only requests
+         user_impersonation, so that path signs in with a device code through an
+         app registration this script creates and consents.
+      2. Finds the Git integration settings by inspecting the live list rather
          than assuming an API name.
-      4. Enables them, scoped to a security group.
+      3. Enables them, scoped to a security group.
 
-    The signed-in user must be Fabric Administrator, Power BI Administrator or
-    Global Administrator. These settings are tenant-wide, so they are scoped to
-    a group by default rather than the whole organisation.
+    The caller must be Fabric Administrator, Power BI Administrator or Global
+    Administrator, or a service principal already allowed to call the admin
+    APIs. These settings are tenant-wide, so they are scoped to a group by
+    default rather than the whole organisation.
+
+    The first run in a tenant has to be interactive: it is this script that
+    enables the settings a service principal needs to reach the admin API.
 
 .EXAMPLE
     ./scripts/Enable-FabricGitIntegration.ps1
@@ -26,6 +31,10 @@
 
 .EXAMPLE
     ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -WhatIf
+
+.EXAMPLE
+    # Unattended, once a service principal is allowed to call the admin API.
+    ./scripts/Enable-FabricGitIntegration.ps1 -Auth ServicePrincipal -IncludeServicePrincipal
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -45,6 +54,11 @@ param(
     # Apply tenant-wide instead of scoping to a security group.
     [switch] $WholeTenant,
 
+    # How the admin API is reached. Auto tries the signed-in identity first,
+    # which is what lets CI run unattended, then falls back to a device code.
+    [ValidateSet('Auto', 'ServicePrincipal', 'DeviceCode')]
+    [string] $Auth = 'Auto',
+
     [string] $AppName = 'fabric-admin-cli',
     [string] $TenantId
 )
@@ -53,7 +67,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference = $false
 
-$AdminRoot = 'https://api.fabric.microsoft.com/v1/admin/tenantsettings'
+$FabricResource = 'https://api.fabric.microsoft.com'
+$AdminRoot = "$FabricResource/v1/admin/tenantsettings"
 $PowerBiAppId = '00000009-0000-0000-c000-000000000000'
 $TenantReadWriteScopeId = 'd594897b-76e7-4b2b-984b-b4adff35e109'
 $Scope = 'https://analysis.windows.net/powerbi/api/Tenant.ReadWrite.All offline_access'
@@ -61,67 +76,108 @@ $Scope = 'https://analysis.windows.net/powerbi/api/Tenant.ReadWrite.All offline_
 if (-not $TenantId) { $TenantId = az account show --query tenantId -o tsv }
 
 # --------------------------------------------------------------------------
-# 1. App registration with the admin scope
+# 1. A token for the admin API
 # --------------------------------------------------------------------------
-$clientId = az ad app list --display-name $AppName --query '[0].appId' -o tsv
-if (-not $clientId) {
-    Write-Host "Creating app registration '$AppName'"
-    # Public client: device code flow, so there is no secret to store or rotate.
-    $clientId = az ad app create `
-        --display-name $AppName `
-        --sign-in-audience AzureADMyOrg `
-        --is-fallback-public-client true `
-        --public-client-redirect-uris "http://localhost" `
-        --query appId -o tsv
+function Test-AdminApiReachable {
+    param([Parameter(Mandatory)][string] $Token)
 
-    az ad sp create --id $clientId -o none 2>&1 | Out-Null
-    az ad app permission add --id $clientId --api $PowerBiAppId --api-permissions "$TenantReadWriteScopeId=Scope" -o none 2>&1 | Out-Null
-
-    foreach ($attempt in 1..3) {
-        & az ad app permission admin-consent --id $clientId 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { break }
-        if ($attempt -eq 3) {
-            throw "Admin consent failed for $clientId. Grant Tenant.ReadWrite.All in Entra ID > App registrations > API permissions, then re-run."
-        }
-        Start-Sleep -Seconds 10
-    }
-    Write-Host "  created and consented ($clientId)"
-}
-else {
-    Write-Host "Using app registration '$AppName' ($clientId)"
-}
-
-# --------------------------------------------------------------------------
-# 2. Device code sign-in
-# --------------------------------------------------------------------------
-$deviceCode = Invoke-RestMethod -Method Post `
-    -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/devicecode" `
-    -Body @{ client_id = $clientId; scope = $Scope }
-
-Write-Host ''
-Write-Host $deviceCode.message -ForegroundColor Cyan
-Write-Host ''
-
-$accessToken = $null
-$deadline = (Get-Date).AddSeconds($deviceCode.expires_in)
-while (-not $accessToken -and (Get-Date) -lt $deadline) {
-    Start-Sleep -Seconds $deviceCode.interval
     try {
-        $accessToken = (Invoke-RestMethod -Method Post `
-                -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" `
-                -Body @{
-                grant_type  = 'urn:ietf:params:oauth:grant-type:device_code'
-                client_id   = $clientId
-                device_code = $deviceCode.device_code
-            }).access_token
+        Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers @{ Authorization = "Bearer $Token" } | Out-Null
+        return $true
     }
     catch {
-        if ($_.ErrorDetails.Message -notmatch 'authorization_pending') {
-            throw "Device code sign-in failed: $($_.ErrorDetails.Message)"
-        }
+        return $false
     }
 }
-if (-not $accessToken) { throw 'Device code expired before sign-in completed.' }
+
+$accessToken = $null
+
+if ($Auth -ne 'DeviceCode') {
+    # An app-only token carries no delegated scope; Fabric authorises it through
+    # the service principal admin-API tenant settings instead.
+    $sessionToken = az account get-access-token --resource $FabricResource --query accessToken -o tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $sessionToken = $null }
+
+    if ($sessionToken -and (Test-AdminApiReachable -Token $sessionToken)) {
+        $accessToken = $sessionToken
+        Write-Host 'Using the signed-in identity; the admin API accepted its token.'
+    }
+    elseif ($Auth -eq 'ServicePrincipal') {
+        throw "The signed-in identity cannot reach $AdminRoot. It needs 'Service principals can use Fabric APIs' and the admin API update setting enabled for a security group it belongs to."
+    }
+    else {
+        Write-Host 'The signed-in identity cannot reach the admin API; falling back to device code.'
+    }
+}
+
+if (-not $accessToken) {
+    # Device code needs a human; CI would otherwise wait here until it expired.
+    if ($env:CI -or $env:TF_IN_AUTOMATION) {
+        throw 'Device code sign-in cannot run unattended. Run this script interactively once to enable the settings, then re-run here with -Auth ServicePrincipal.'
+    }
+
+    # ----------------------------------------------------------------------
+    # App registration with the admin scope
+    # ----------------------------------------------------------------------
+    $clientId = az ad app list --display-name $AppName --query '[0].appId' -o tsv
+    if (-not $clientId) {
+        Write-Host "Creating app registration '$AppName'"
+        # Public client: device code flow, so there is no secret to store or rotate.
+        $clientId = az ad app create `
+            --display-name $AppName `
+            --sign-in-audience AzureADMyOrg `
+            --is-fallback-public-client true `
+            --public-client-redirect-uris "http://localhost" `
+            --query appId -o tsv
+
+        az ad sp create --id $clientId -o none 2>&1 | Out-Null
+        az ad app permission add --id $clientId --api $PowerBiAppId --api-permissions "$TenantReadWriteScopeId=Scope" -o none 2>&1 | Out-Null
+
+        foreach ($attempt in 1..3) {
+            & az ad app permission admin-consent --id $clientId 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) {
+                throw "Admin consent failed for $clientId. Grant Tenant.ReadWrite.All in Entra ID > App registrations > API permissions, then re-run."
+            }
+            Start-Sleep -Seconds 10
+        }
+        Write-Host "  created and consented ($clientId)"
+    }
+    else {
+        Write-Host "Using app registration '$AppName' ($clientId)"
+    }
+
+    # ----------------------------------------------------------------------
+    # Device code sign-in
+    # ----------------------------------------------------------------------
+    $deviceCode = Invoke-RestMethod -Method Post `
+        -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/devicecode" `
+        -Body @{ client_id = $clientId; scope = $Scope }
+
+    Write-Host ''
+    Write-Host $deviceCode.message -ForegroundColor Cyan
+    Write-Host ''
+
+    $deadline = (Get-Date).AddSeconds($deviceCode.expires_in)
+    while (-not $accessToken -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds $deviceCode.interval
+        try {
+            $accessToken = (Invoke-RestMethod -Method Post `
+                    -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" `
+                    -Body @{
+                    grant_type  = 'urn:ietf:params:oauth:grant-type:device_code'
+                    client_id   = $clientId
+                    device_code = $deviceCode.device_code
+                }).access_token
+        }
+        catch {
+            if ($_.ErrorDetails.Message -notmatch 'authorization_pending') {
+                throw "Device code sign-in failed: $($_.ErrorDetails.Message)"
+            }
+        }
+    }
+    if (-not $accessToken) { throw 'Device code expired before sign-in completed.' }
+}
 
 $headers = @{
     Authorization       = "Bearer $accessToken"
@@ -136,8 +192,11 @@ function Get-Settings {
 function Get-RestErrorMessage {
     param([Parameter(Mandatory)][System.Management.Automation.ErrorRecord] $ErrorRecord)
 
-    if (-not [string]::IsNullOrWhiteSpace($ErrorRecord.ErrorDetails.Message)) {
-        return $ErrorRecord.ErrorDetails.Message
+    # ErrorDetails is absent for transport-level failures, and StrictMode makes
+    # reading through it fatal.
+    $details = $ErrorRecord.ErrorDetails
+    if ($details -and -not [string]::IsNullOrWhiteSpace($details.Message)) {
+        return $details.Message
     }
     return $ErrorRecord.Exception.Message
 }
@@ -175,7 +234,7 @@ function Test-SettingConfigured {
 }
 
 # --------------------------------------------------------------------------
-# 3. Find the relevant settings from the live list
+# 2. Find the relevant settings from the live list
 # --------------------------------------------------------------------------
 $all = Get-Settings
 
@@ -203,14 +262,17 @@ if ($missingSettings.Count -gt 0) {
 $targets = @($requiredSettingNames | ForEach-Object { $settingsByName[$_] })
 
 Write-Host 'Required tenant settings:'
-$targets | Select-Object settingName, title, enabled, canSpecifySecurityGroups, `
-    @{ Name = 'EnabledGroups'; Expression = { @(Get-SettingGroups -Setting $_ -PropertyName 'enabledSecurityGroups').Count } } | `
-    Format-Table -AutoSize
+# A CI console is narrow, and the default width drops the columns that explain a
+# rejected update.
+$targets | Select-Object settingName, enabled, canSpecifySecurityGroups, `
+@{ Name = 'EnabledGroups'; Expression = { @(Get-SettingGroups -Setting $_ -PropertyName 'enabledSecurityGroups').Count } }, `
+@{ Name = 'ExcludedGroups'; Expression = { @(Get-SettingGroups -Setting $_ -PropertyName 'excludedSecurityGroups').Count } } | `
+    Format-Table -AutoSize | Out-String -Width 500 | Write-Host
 
 if ($List) { return }
 
 # --------------------------------------------------------------------------
-# 4. Enable whatever is still off
+# 3. Enable whatever is still off
 # --------------------------------------------------------------------------
 $groupId = $null
 if (-not $WholeTenant) {
@@ -262,7 +324,15 @@ foreach ($setting in $targets) {
         $changed++
     }
     catch {
-        throw "Could not configure $($setting.settingName): $(Get-RestErrorMessage -ErrorRecord $_)"
+        # Reading the settings and updating them sit behind two different service
+        # principal switches, so a successful list does not imply a writable one.
+        # The body and the live shape are logged because Fabric answers an
+        # unacceptable transition with a bare BadRequest.
+        throw (@(
+                "Could not configure $($setting.settingName): $(Get-RestErrorMessage -ErrorRecord $_)"
+                "Request body: $($body | ConvertTo-Json -Depth 6 -Compress)"
+                "Live setting: $($setting | ConvertTo-Json -Depth 4 -Compress)"
+            ) -join [Environment]::NewLine)
     }
 }
 

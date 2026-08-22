@@ -130,7 +130,7 @@ az rest --method GET \
 
 ### Fabric tenant settings
 
-Terraform cannot manage these. `scripts/Enable-FabricGitIntegration.ps1` enables them through a device-code app holding `Tenant.ReadWrite.All`, because the Azure CLI's Fabric token carries only `user_impersonation` and cannot call `/v1/admin/*` regardless of role.
+Terraform cannot manage these. `scripts/Enable-FabricGitIntegration.ps1` enables them. It prefers the identity you are already signed in as, which lets CI run unattended once a service principal is allowed to call the admin APIs. A user falls back to a device-code app holding `Tenant.ReadWrite.All`, because the Azure CLI's Fabric token carries only `user_impersonation` and cannot call `/v1/admin/*` regardless of role. The first run in a tenant has to take that interactive path, since it is this script that grants a service principal the access in the first place.
 
 | Setting | Why | Needed by |
 | --- | --- | --- |
