@@ -64,7 +64,7 @@ param(
     [ValidateSet('User', 'ServicePrincipal')]
     [string] $CallerPrincipalType = 'User',
 
-    [string] $NspName = 'sec-perimeter',
+    [string] $NspName = 'az-nw-security-perimeter',
     [string] $NspResourceGroup = '',
     [string] $NspProfile = 'defaultProfile',
     [ValidateSet('Enforced', 'Learning')] [string] $NspAccessMode = 'Enforced',

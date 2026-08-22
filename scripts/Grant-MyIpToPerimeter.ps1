@@ -32,7 +32,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string] $PerimeterName = 'sec-perimeter',
+    [string] $PerimeterName = 'az-nw-security-perimeter',
     [string] $ResourceGroup = 'rg-terraform-state',
     [string] $ProfileName,
     [string] $SubscriptionId,

@@ -72,7 +72,7 @@ param(
     [string] $EngineerGroup = 'sg-fabric-data-engineers',
     [string] $AnalystGroup = 'sg-fabric-analysts',
 
-    [string] $NspName = 'sec-perimeter',
+    [string] $NspName = 'az-nw-security-perimeter',
     # Defaults to the state resource group, so the perimeter is owned and torn
     # down with the thing it protects rather than living in shared infrastructure.
     [string] $NspResourceGroup = '',

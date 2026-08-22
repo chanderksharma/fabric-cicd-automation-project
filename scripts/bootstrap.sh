@@ -29,7 +29,7 @@ APP_NAME="sp-fabric-cicd"
 ADMIN_GROUP="sg-fabric-platform-admins"
 ENGINEER_GROUP="sg-fabric-data-engineers"
 ANALYST_GROUP="sg-fabric-analysts"
-NSP_NAME="sec-perimeter"
+NSP_NAME="az-nw-security-perimeter"
 # Empty means "use the state resource group", so the perimeter is owned and torn
 # down with the thing it protects rather than living in shared infrastructure.
 NSP_RG=""
@@ -67,7 +67,7 @@ Options:
                           do not exist, and add you to the admin group. Omit
                           this when the groups are managed by identity
                           governance.
-  --nsp-name NAME         Network security perimeter (default: sec-perimeter)
+  --nsp-name NAME         Network security perimeter (default: az-nw-security-perimeter)
   --nsp-rg NAME           Perimeter resource group (default: the state
                           resource group)
   --nsp-profile NAME      Perimeter profile (default: defaultProfile)
