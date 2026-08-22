@@ -333,6 +333,36 @@ else {
         Write-Host '    added Microsoft Graph Directory.Read.All application permission'
     }
 
+    # Requesting the permission does not grant it. Without consent the directory
+    # stays unreadable and Terraform's group lookups fail with 403.
+    $grantedRoles = az rest --method GET `
+        --url "https://graph.microsoft.com/v1.0/servicePrincipals/$SpObjectId/appRoleAssignments" `
+        --query "length(value[?appRoleId=='$directoryReadAllRoleId'])" -o tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $grantedRoles = '0' }
+
+    if ($grantedRoles -eq '0') {
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            $output = & az ad app permission admin-consent --id $AppId 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host '    granted admin consent for Directory.Read.All'
+                break
+            }
+            $global:LASTEXITCODE = 0
+
+            $message = $output -join [Environment]::NewLine
+            if ($attempt -eq 6 -or $message -notmatch '(?i)does not exist|not found|temporar|try again|propagat') {
+                throw "Admin consent failed for '$AppName' ($AppId): $message. Grant Microsoft Graph Directory.Read.All in Entra ID > App registrations > API permissions, then re-run."
+            }
+
+            $delaySeconds = 5 * $attempt
+            Write-Host "    waiting for Entra propagation before consenting; retrying in ${delaySeconds}s"
+            Start-Sleep -Seconds $delaySeconds
+        }
+    }
+    else {
+        Write-Host '    Directory.Read.All is already consented'
+    }
+
     Write-Host "    appId (client id)     : $AppId"
     Write-Host "    service principal oid : $SpObjectId"
 
