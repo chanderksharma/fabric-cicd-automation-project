@@ -37,16 +37,6 @@ on:
         required: false
         default: ''
         type: string
-      configure_tenant_settings:
-        description: Attempt the Fabric tenant settings here. Off by default; it needs a Fabric administrator signed in interactively
-        required: true
-        default: false
-        type: boolean
-      propagation_wait_seconds:
-        description: Wait after changing Fabric tenant settings
-        required: true
-        default: '900'
-        type: string
       trigger_apply:
         description: Dispatch terraform-apply after bootstrap
         required: true
@@ -75,7 +65,6 @@ env:
   INPUT_ITEMS_REPOSITORY: ${{ inputs.items_repository }}
   INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
   INPUT_PLATFORM_ADMIN_MEMBERS: ${{ inputs.platform_admin_members }}
-  INPUT_PROPAGATION_WAIT_SECONDS: ${{ inputs.propagation_wait_seconds }}
 
 jobs:
   bootstrap:
@@ -219,27 +208,6 @@ jobs:
           "DEPLOYMENT_CLIENT_ID=$clientId" >> $env:GITHUB_ENV
           "DEPLOYMENT_OBJECT_ID=$objectId" >> $env:GITHUB_ENV
 
-      - name: Enable Fabric tenant settings
-        id: tenant_settings
-        if: inputs.configure_tenant_settings
-        shell: pwsh
-        run: |
-          ./scripts/Enable-FabricGitIntegration.ps1 `
-              -IncludeServicePrincipal `
-              -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
-
-      # Nothing propagates when nothing changed, and a re-run usually changes nothing.
-      - name: Wait for Fabric settings propagation
-        if: inputs.configure_tenant_settings && inputs.propagation_wait_seconds != '0' && steps.tenant_settings.outputs.changed != '0'
-        shell: pwsh
-        run: |
-          $seconds = 0
-          if (-not [int]::TryParse($env:INPUT_PROPAGATION_WAIT_SECONDS, [ref]$seconds) -or $seconds -lt 0 -or $seconds -gt 1800) {
-              throw 'propagation_wait_seconds must be an integer from 0 to 1800.'
-          }
-          Write-Host "Waiting $seconds seconds for Fabric tenant settings to propagate."
-          Start-Sleep -Seconds $seconds
-
       - name: Create GitHub environments and protections
         shell: pwsh
         run: |
@@ -325,6 +293,8 @@ jobs:
               ''
               "Permanent deployment identity: ``$env:DEPLOYMENT_CLIENT_ID``"
               "State: ``$env:INPUT_STORAGE_ACCOUNT_NAME/tfstate-gh``"
+              ''
+              'Still manual: run ``scripts/Enable-FabricGitIntegration.ps1`` from a workstation as a Fabric administrator. Git integration stays disabled until you do.'
               ''
               "Remove ``BOOTSTRAP_GITHUB_TOKEN`` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
           ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8

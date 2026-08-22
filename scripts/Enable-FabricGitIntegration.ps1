@@ -344,11 +344,6 @@ if (-not $WhatIfPreference) {
     }
 }
 
-# Lets the caller skip a propagation wait that has nothing to wait for.
-if ($env:GITHUB_OUTPUT) {
-    "changed=$changed" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
-}
-
 if ($WhatIfPreference) {
     Write-Host 'Dry run. Nothing was changed.'
 }
