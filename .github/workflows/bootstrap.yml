@@ -30,7 +30,7 @@ on:
       items_owner:
         description: Owner of the items repository. Blank uses the owner of this repository
         required: false
-        default: chandsharma_microsoft
+        default: chanderksharma
         type: string
       workspace_prefix:
         description: 'Names the workspaces and their branches, e.g. my-contoso gives my-contoso-dev. Empty uses contoso-fab-gh-<environment>'
