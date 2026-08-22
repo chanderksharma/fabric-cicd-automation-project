@@ -1,16 +1,6 @@
----
-title: Setup with GitHub Actions
-description: Bootstrap and operate the Microsoft Fabric platform through GitHub Actions using federated Azure service principals and GitHub OIDC.
-author: Fabric Platform Team
-ms.date: 2026-08-22
-ms.topic: how-to
-keywords:
-  - microsoft fabric
-  - terraform
-  - github actions
-  - oidc
-estimated_reading_time: 25
----
+# Setup with GitHub Actions
+
+Bootstrap and operate the Microsoft Fabric platform through GitHub Actions using federated Azure service principals and GitHub OIDC.
 
 ## Who this is for
 

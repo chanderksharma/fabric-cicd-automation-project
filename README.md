@@ -1,17 +1,6 @@
----
-title: Microsoft Fabric Platform Foundation
-description: Environment-promoted Microsoft Fabric foundation built with Terraform for infrastructure and Fabric Git integration for item content, deployable as two independent lanes.
-author: Fabric Platform Team
-ms.date: 2026-08-20
-ms.topic: overview
-keywords:
-  - microsoft fabric
-  - terraform
-  - github actions
-  - oidc
-  - git integration
-estimated_reading_time: 18
----
+# Microsoft Fabric Platform Foundation
+
+Environment-promoted Microsoft Fabric foundation built with Terraform for infrastructure and Fabric Git integration for item content, deployable as two independent lanes.
 
 ## Overview
 
