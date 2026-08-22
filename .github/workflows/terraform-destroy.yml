@@ -78,10 +78,68 @@ jobs:
               throw "Run this workflow from the default branch ($expectedRef)."
           }
 
+  # The deployment identity is deleted by the cleanup job below, so a second run
+  # would otherwise fail at Azure login with a raw AADSTS700016 rather than
+  # reporting that there is nothing left to dismantle. The bootstrap identity
+  # survives teardown, so it is the one that can still answer the question.
+  preflight:
+    name: check lane identity
+    runs-on: [self-hosted, Windows, X64]
+    needs: confirm
+    timeout-minutes: 10
+    outputs:
+      lane_present: ${{ steps.lane.outputs.lane_present }}
+    env:
+      AZURE_BOOTSTRAP_CLIENT_ID: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+      AZURE_BOOTSTRAP_TENANT_ID: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+      AZURE_BOOTSTRAP_SUBSCRIPTION_ID: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+    steps:
+      - name: Check bootstrap identity
+        run: |
+          $required = @(
+              'AZURE_BOOTSTRAP_CLIENT_ID'
+              'AZURE_BOOTSTRAP_TENANT_ID'
+              'AZURE_BOOTSTRAP_SUBSCRIPTION_ID'
+          )
+          $missing = @($required | Where-Object {
+              [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+          })
+          if ($missing.Count -gt 0) {
+              throw "Required repository variables are missing: $($missing -join ', ')."
+          }
+
+      - name: Azure login (bootstrap identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Detect deployment identity
+        id: lane
+        run: |
+          $appName = 'sp-fabric-cicd-gh'
+          $appId = az ad app list --display-name $appName --query '[0].appId' -o tsv
+          if ($LASTEXITCODE -ne 0) {
+              throw "Could not query app registrations as the bootstrap identity."
+          }
+
+          $lanePresent = -not [string]::IsNullOrWhiteSpace($appId)
+          "lane_present=$($lanePresent.ToString().ToLowerInvariant())" |
+              Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
+          if ($lanePresent) {
+              Write-Host "Deployment identity '$appName' exists; dismantling the lane."
+          }
+          else {
+              Write-Host "::notice::'$appName' does not exist, so the gh lane is already dismantled. Skipping resource teardown; re-create it with the bootstrap workflow."
+          }
+
   destroy:
     name: dismantle gh lane
     runs-on: [self-hosted, Windows, X64]
-    needs: confirm
+    needs: [confirm, preflight]
+    if: needs.preflight.outputs.lane_present == 'true'
     environment: platform
     timeout-minutes: 120
     env:
@@ -154,12 +212,15 @@ jobs:
   cleanup:
     name: remove bootstrap-managed components
     runs-on: [self-hosted, Windows, X64]
-    needs: destroy
+    needs: [preflight, destroy]
+    # Shared groups and state are still removable once the lane itself is gone.
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && (needs.destroy.result == 'success' || needs.destroy.result == 'skipped') }}
     timeout-minutes: 30
     env:
       AZURE_BOOTSTRAP_CLIENT_ID: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
       AZURE_BOOTSTRAP_TENANT_ID: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
       AZURE_BOOTSTRAP_SUBSCRIPTION_ID: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+      DESTROY_STATUS: ${{ needs.destroy.result }}
       REMOVE_SHARED_GROUPS: ${{ inputs.remove_shared_groups }}
       REMOVE_SHARED_STATE: ${{ inputs.remove_shared_state }}
     steps:
@@ -237,11 +298,18 @@ jobs:
         env:
           CLEANUP_STATUS: ${{ job.status }}
         run: |
+          $laneStatus = if ($env:DESTROY_STATUS -eq 'skipped') {
+              'already absent; dismantled by an earlier run'
+          }
+          else {
+              'removed by the preceding job'
+          }
+
           @(
               '## GitHub Actions lane teardown'
               ''
               "- Cleanup status: $env:CLEANUP_STATUS"
-              '- Lane resources and branches: removed by the preceding job'
+              "- Lane resources and branches: $laneStatus"
               '- Deployment app registration: removal requested'
               "- Shared Entra group removal requested: $env:REMOVE_SHARED_GROUPS"
               "- Shared Terraform state removal requested: $env:REMOVE_SHARED_STATE"
