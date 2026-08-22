@@ -86,6 +86,24 @@ This is the only interactive action. If the required Git and service-principal t
 
 The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it.
 
+## Grant yourself workspace access
+
+This is a manual step. Terraform assigns workspace roles to the three security
+groups and never to individuals, so nobody sees the workspaces until they are a
+member of one. Bootstrap adds the identity it runs as, not you.
+
+```powershell
+az ad group member add `
+    --group (az ad group list --display-name sg-fabric-platform-admins --query '[0].id' -o tsv) `
+    --member-id (az ad signed-in-user show --query id -o tsv)
+```
+
+That grants Admin on dev and test, and Viewer on prod. Writing group membership
+needs a directory role such as Groups Administrator; Global Reader is not enough.
+
+Repeat it whenever the groups are recreated, because a rebuilt group is a new
+object and membership does not carry over.
+
 ## Enable the Fabric tenant settings
 
 This is a manual step. Fabric's admin API accepts only a signed-in administrator
