@@ -197,16 +197,31 @@ if ($groupsOk -and $env:GITHUB_ENV) {
 if ($CreateGroups) {
     # Terraform reads the capacity through the Fabric API, which requires the
     # caller to be a capacity administrator. Membership here is what grants it.
-    $signedInOid = az ad signed-in-user show --query id -o tsv
+    #
+    # The Fabric admin API settings are scoped to this group too, so a caller
+    # left out of it loses admin API access whenever the group is recreated.
+    $signedInOid = az ad signed-in-user show --query id -o tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; $signedInOid = $null }
+
+    $callerOid = if ($signedInOid) { $signedInOid } else { $CallerObjectId }
     $adminOid = az ad group list --display-name $AdminGroup --query '[0].id' -o tsv
-    if (-not $signedInOid) {
-        Write-Host '    caller is not a user; skipping caller group membership'
-    }
-    elseif ((Invoke-AzQuiet @('ad', 'group', 'member', 'add', '--group', $adminOid, '--member-id', $signedInOid, '-o', 'none')) -eq 0) {
-        Write-Host "    added you to $AdminGroup"
+    if (-not $callerOid) {
+        Write-Host '    caller object id is unknown; skipping caller group membership'
     }
     else {
-        Write-Host "    (you are already a member of $AdminGroup)"
+        $callerAdd = & az ad group member add --group $adminOid --member-id $callerOid -o none 2>&1
+        $callerText = ($callerAdd | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    added the caller to $AdminGroup"
+        }
+        elseif ($callerText -match 'already exist') {
+            $global:LASTEXITCODE = 0
+            Write-Host "    (the caller is already in $AdminGroup)"
+        }
+        else {
+            $global:LASTEXITCODE = 0
+            Write-Host "    WARNING could not add the caller to ${AdminGroup}: $callerText" -ForegroundColor Yellow
+        }
     }
 }
 elseif (-not $groupsOk) {
