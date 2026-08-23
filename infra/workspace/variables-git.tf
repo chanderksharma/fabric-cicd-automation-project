@@ -35,9 +35,20 @@ variable "git_provider_type" {
 }
 
 variable "git_owner_name" {
-  description = "GitHub organisation or user owning the items repository."
+  description = <<-EOT
+    GitHub organisation or user owning the items repository. Supplied as
+    TF_VAR_git_owner_name, or entered at the prompt.
+
+    Must match the owner the platform root used for the source control
+    connection; no default, because a wrong owner connects the workspace to a
+    repository that does not exist.
+  EOT
   type        = string
-  default     = "chandsharma_microsoft"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$", var.git_owner_name))
+    error_message = "git_owner_name must be a GitHub organisation or user name."
+  }
 }
 
 variable "git_repository_name" {

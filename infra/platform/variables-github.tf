@@ -1,7 +1,17 @@
 variable "github_owner" {
-  description = "GitHub organisation or user that owns the repository holding the Fabric item source."
+  description = <<-EOT
+    GitHub organisation or user that owns the repository holding the Fabric item
+    source. Supplied as TF_VAR_github_owner, or entered at the prompt.
+
+    Deliberately has no default: the value names a real account, and a wrong one
+    builds a source control connection that points somewhere that does not exist.
+  EOT
   type        = string
-  default     = "chandsharma_microsoft"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$", var.github_owner))
+    error_message = "github_owner must be a GitHub organisation or user name."
+  }
 }
 
 variable "github_repository" {

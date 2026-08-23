@@ -60,6 +60,15 @@ else
   unset TF_VAR_workspace_prefix
 fi
 
+# One key feeds both roots, as the workflows do: the platform builds the source
+# control connection from it and each workspace syncs with the same owner.
+if [[ -n "${FABRIC_ITEMS_OWNER:-}" ]]; then
+  export TF_VAR_github_owner="$FABRIC_ITEMS_OWNER"
+  export TF_VAR_git_owner_name="$FABRIC_ITEMS_OWNER"
+else
+  unset TF_VAR_github_owner TF_VAR_git_owner_name
+fi
+
 # Provider configuration. ARM_USE_OIDC is deliberately NOT set: locally the
 # providers authenticate with the Azure CLI session.
 export ARM_TENANT_ID="$AZURE_TENANT_ID"
@@ -70,5 +79,6 @@ echo "  TF_VAR_workspace_prefix                 = ${TF_VAR_workspace_prefix:-(un
 echo "  TF_VAR_tenant_id                        = $TF_VAR_tenant_id"
 echo "  TF_VAR_subscription_id                  = $TF_VAR_subscription_id"
 echo "  TF_VAR_cicd_service_principal_object_id = $TF_VAR_cicd_service_principal_object_id"
+echo "  TF_VAR_github_owner                     = ${TF_VAR_github_owner:-(unset; Terraform will prompt for it)}"
 
 unset _env_file _key

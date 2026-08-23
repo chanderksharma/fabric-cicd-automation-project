@@ -1,4 +1,7 @@
-# Setup with GitHub Actions
+---
+title: Setup with GitHub Actions
+description: Bootstrap and operate the Fabric platform through GitHub Actions and federated Azure identities
+---
 
 Bootstrap and operate the Microsoft Fabric platform through GitHub Actions using federated Azure service principals and GitHub OIDC.
 
@@ -32,7 +35,7 @@ Work through these before dispatching any workflow. Each one has blocked a real 
 |-------------|-----|
 | An Azure subscription you can assign roles in | Bootstrap creates a resource group, a storage account, a network security perimeter and a Fabric capacity |
 | Non-zero Fabric capacity-unit quota in the target region | Quota defaults to zero. `centralus` is the working region here; verify before changing it |
-| Owner on that subscription for the bootstrap service principal | It creates resource groups and assigns roles |
+| Owner with unrestricted role delegation on that subscription for the bootstrap service principal | It creates resource groups and assigns roles, including `User Access Administrator` for the permanent deployment identity |
 
 Check quota before anything else, because a missing quota fails late:
 
@@ -67,22 +70,34 @@ A repository cannot authorize its own first identity, so create this one by hand
 It is used only by `bootstrap.yml`.
 
 1. Register an application in Entra ID and note its client ID.
-2. Grant these Microsoft Graph **application** permissions and consent to them:
+2. Grant these Microsoft Graph permissions. Each one must be an **Application**
+    permission with tenant-wide administrator consent, not a Delegated permission:
 
-   | Permission | Used for |
-   |------------|----------|
-   | `Application.ReadWrite.All` | Creating the permanent deployment application |
-   | `Group.ReadWrite.All` | Creating the three security groups and managing membership |
-   | `DelegatedPermissionGrant.ReadWrite.All` | Consenting the deployment application |
+    | Permission | Type | Admin consent | Used for |
+    |------------|------|---------------|----------|
+    | `Application.ReadWrite.All` | Application | Required | Creating the permanent deployment application and service principal |
+    | `Group.ReadWrite.All` | Application | Required | Creating the three security groups and managing membership |
+    | `DelegatedPermissionGrant.ReadWrite.All` | Application | Required | Consenting the deployment application's Graph permissions |
+    | `AppRoleAssignment.ReadWrite.All` | Application | Optional | Granting the deployment application `Directory.Read.All`. Bootstrap continues without it; see the note below before adding it |
 
-3. Assign it **Owner** on the target subscription.
+3. Assign the bootstrap service principal **Owner** at the target subscription
+    scope with **Allow user to assign all roles**. Resource-group access is
+    insufficient because bootstrap creates subscription-scoped resources and
+    delegates `Storage Blob Data Contributor`, `Contributor` and
+    `User Access Administrator` to the permanent deployment identity. The portal
+    preselects **Allow user to assign all roles except privileged administrator
+    roles**, which writes an ABAC condition that blocks the
+    `User Access Administrator` delegation and fails bootstrap. Assigning through
+    `az role assignment create` adds no condition.
 4. Add the federated credential described under [Trust boundary](#trust-boundary).
 
 All four steps in one pass, with an active Global Administrator role and Owner on
 the subscription:
 
 ```powershell
-$repo  = '<owner>/<repository>'
+$repo = '<owner>/<repository>'
+$repoInfo = gh api "repos/$repo" | ConvertFrom-Json
+$repositorySubject = "$($repoInfo.owner.login)@$($repoInfo.owner.id)/$($repoInfo.name)@$($repoInfo.id)"
 $subId = az account show --query id -o tsv
 
 $appId = az ad app create --display-name sp-fabric-bootstrap `
@@ -106,7 +121,7 @@ az role assignment create --assignee $appId --role Owner `
 @{
     name      = 'github-bootstrap-main'
     issuer    = 'https://token.actions.githubusercontent.com'
-    subject   = "repo:${repo}:ref:refs/heads/main"
+    subject   = "repo:${repositorySubject}:ref:refs/heads/main"
     audiences = @('api://AzureADTokenExchange')
 } | ConvertTo-Json | Set-Content fic.json
 az ad app federated-credential create --id $appId --parameters fic.json
@@ -115,6 +130,39 @@ Remove-Item fic.json
 "AZURE_BOOTSTRAP_CLIENT_ID = $appId"
 ```
 
+Before running the workflow, verify that Entra reports each Graph permission as
+**Granted for** the tenant and that Azure RBAC resolves the subscription-level
+Owner assignment:
+
+```powershell
+az ad app permission list --id $appId -o table
+az role assignment list --assignee $appId `
+    --scope "/subscriptions/$subId" --include-inherited `
+    --query "[].{role:roleDefinitionName,scope:scope,condition:condition}" -o table
+```
+
+The Owner row must use the subscription scope and report an empty condition. A
+condition mentioning `roleAssignments/write` restricts delegation and fails
+bootstrap regardless of the role name shown beside it.
+
+To correct a conditional assignment in the Azure portal, open the subscription,
+select **Access control (IAM) > Role assignments**, find the bootstrap service
+principal, and open **Edit** on its assignment. Under **Conditions**, choose
+**Allow user to assign all roles (highly privileged)** and save. Recreating the
+assignment from the CLI has the same effect:
+
+```powershell
+az role assignment create --assignee-object-id $bootstrapObjectId `
+    --assignee-principal-type ServicePrincipal `
+    --role Owner --scope "/subscriptions/$subId"
+```
+
+If policy forbids unconstrained delegation, keep the condition but extend it to
+permit assigning `Storage Blob Data Contributor`, `Contributor` and
+`User Access Administrator` to service principals. Run the verification command
+again before rerunning bootstrap; the workflow cannot retry past this denial
+because the restriction is permanent until the assignment changes.
+
 The credential goes in a file because `--parameters` takes inline JSON that
 Windows shells mangle on the way to `az`. If `admin-consent` fails immediately
 after `permission add`, wait a minute and re-run only that line; Entra has not
@@ -122,8 +170,8 @@ finished propagating the permission request.
 
 Feed the printed client ID, your tenant ID and subscription ID into the
 repository variables listed under [Trust boundary](#trust-boundary). If the
-repository has immutable subjects enabled, use the `@owner-id` subject form shown
-there instead.
+repository's owner, name or numeric ID changes, recreate the credential because
+the subject match is exact.
 
 `AppRoleAssignment.ReadWrite.All` is optional and best left off. Bootstrap uses it
 when present to grant the deployment application `Directory.Read.All`; nothing
@@ -136,7 +184,7 @@ permission to any application, which is a large privilege for a CI credential.
 |-------------|-------|
 | Administrator on this repository | Needed to dispatch workflows and set variables |
 | A self-hosted Windows x64 runner | Every job declares `runs-on: [self-hosted, Windows, X64]`. Without one registered and online, runs queue indefinitely rather than failing |
-| A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers |
+| A plan that supports environment protection on private repositories | The workflow creates `platform`, `dev`, `test` and `prod` with reviewers. Without such a plan, bootstrap still creates the environments but logs a warning and leaves them unprotected, so `test` and `prod` deploy without approval |
 | An items repository | Holds the Fabric item definitions. Bootstrap creates it and one branch per workspace if missing. `items_owner` sets who owns it, defaulting to a different account than this repository |
 | `BOOTSTRAP_GITHUB_TOKEN` | Temporary. Repository administration, Actions and Environments read/write |
 | `FABRIC_GITHUB_PAT` | Permanent. Fine-grained token with Contents read/write on the items repository |
@@ -194,7 +242,10 @@ Add two repository secrets:
 | `BOOTSTRAP_GITHUB_TOKEN` | Temporary | Repository Administration, Actions and Environments read/write; access to create the items repository |
 | `FABRIC_GITHUB_PAT` | Permanent | Fine-grained token with Contents read/write on the items repository |
 
-The bootstrap service principal needs Owner on the target subscription. It also needs these Microsoft Graph application permissions with administrator consent:
+The bootstrap service principal needs Owner at the target subscription scope with
+unrestricted role delegation, because it assigns `User Access Administrator` to
+the permanent deployment identity. It also needs these Microsoft Graph
+**Application** permissions, each with tenant-wide administrator consent:
 
 * `Application.ReadWrite.All`
 * `Group.ReadWrite.All`
@@ -209,17 +260,17 @@ Create a federated identity credential on the bootstrap application with:
 
 ```text
 issuer:   https://token.actions.githubusercontent.com
-subject:  repo:<owner>/<repository>:ref:refs/heads/main
+subject: repo:<owner>@<owner-id>/<repository>@<repository-id>:ref:refs/heads/main
 audience: api://AzureADTokenExchange
 ```
 
-Use GitHub's immutable subject format when it is enabled for the repository:
-
-```text
-subject: repo:<owner>@<owner-id>/<repository>@<repository-id>:ref:refs/heads/main
-```
-
-The workflow reads `GITHUB_REPOSITORY_OWNER_ID` and `GITHUB_REPOSITORY_ID` automatically and uses the same immutable format for the permanent deployment credentials. Run `bootstrap.yml` from `main`, because the federated subject must match exactly. Neither Azure service principal has a client secret. Revoke the bootstrap application's repository federated credential after bootstrap if the elevated bootstrap path should not remain available.
+The setup command resolves the numeric IDs through the GitHub REST API. The
+workflow reads `GITHUB_REPOSITORY_OWNER_ID` and `GITHUB_REPOSITORY_ID`
+automatically and uses the same immutable format for the permanent deployment
+credentials. Run `bootstrap.yml` from `main`, because the federated subject must
+match exactly. Neither Azure service principal has a client secret. Revoke the
+bootstrap application's repository federated credential after bootstrap if the
+elevated bootstrap path should not remain available.
 
 The permanent deployment application needs no Microsoft Graph permission. Bootstrap resolves the three security groups and publishes their object IDs as repository variables, which the Terraform workflows pass in as inputs. Terraform falls back to looking the groups up by display name only when those variables are absent, and that path does require `Directory.Read.All`.
 
@@ -229,7 +280,7 @@ Fabric tenant-setting administration requires a delegated `Tenant.ReadWrite.All`
 
 ### GitHub plan requirements
 
-The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it.
+The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it. On a plan without it, GitHub rejects the protection rules with `HTTP 422`; bootstrap then creates the environments unprotected and continues, so approvals and the `main` restriction are not enforced. Make the repository public, upgrade the plan, or gate promotion another way.
 
 ## Run the platform end to end
 
@@ -394,7 +445,7 @@ replacing it.
 | Identity | `sp-fabric-cicd-gh`, six federated credentials and Azure RBAC |
 | Entra ID | Platform admin, data engineer and analyst groups when absent |
 | Source | Items repository with one branch per workspace, `gh-{dev,test,prod}` unless `workspace_prefix` was set |
-| GitHub | Four environments, protection rules and repository/environment variables |
+| GitHub | Four environments, protection rules where the plan allows them, and repository/environment variables |
 | Fabric | Tenant settings after delegated approval |
 | Deployment | Dispatch of `terraform-apply.yml`, only when `trigger_apply` is on |
 
@@ -408,7 +459,7 @@ GitHub-hosted runners add their current public IP to the state perimeter before 
 apply-platform -> apply-dev -> apply-test -> apply-prod -> apply-deployment-pipeline
 ```
 
-Each job is bound to its GitHub Environment, so `test` and `prod` pause for approval. Each has a `concurrency` group, so two runs cannot apply against the same state file simultaneously.
+Each job is bound to its GitHub Environment, so `test` and `prod` pause for approval wherever protection rules were applied. Each has a `concurrency` group, so two runs cannot apply against the same state file simultaneously.
 
 The first platform pass creates the capacity and Fabric GitHub connection with deployment-pipeline creation temporarily disabled. The workspace jobs consume the connection GUID from that job. After all three workspaces exist, the final platform pass creates and assigns the deployment pipeline.
 
@@ -424,7 +475,7 @@ After bootstrap, every infrastructure change follows a pull request. [terraform-
 
 ## Verify a CI run
 
-Open the merged commit's `terraform-apply` run under the repository's **Actions** tab. Confirm all five jobs succeeded and that the protected environments recorded the expected approvals.
+Open the merged commit's `terraform-apply` run under the repository's **Actions** tab. Confirm all five jobs succeeded and that the protected environments recorded the expected approvals. If bootstrap warned that the plan does not support protection rules, the environments exist without reviewers and the jobs run straight through.
 
 In the Fabric portal, confirm that the `contoso-fab-gh-dev`, `contoso-fab-gh-test` and `contoso-fab-gh-prod` workspaces exist and each reports `ConnectedAndInitialized` under Git integration. Confirm that `contoso-fab-gh-release` contains all three assigned stages.
 
@@ -437,11 +488,14 @@ If bootstrap ran with a `workspace_prefix`, substitute it: `my-contoso-dev` and 
 | `403 not authorized by network security perimeter` at init | The runner access step failed or has not propagated. Confirm the deployment principal can update the perimeter and that both `TF_STATE_*` variables are set |
 | `No value for required variable` | A GitHub variable is missing. Re-run bootstrap to restore repository and environment variables |
 | `Repository secret FABRIC_GITHUB_PAT is required` | Create the repository secret with access to the items repository |
-| `AADSTS70021: No matching federated identity record` | The federated credential subject does not match. Check the environment name in the workflow against the credential |
+| `AADSTS70021` or `AADSTS700213`: No matching federated identity record | Compare the assertion subject in the error with the Entra credential character for character. For bootstrap, use the immutable owner and repository ID form under [Trust boundary](#trust-boundary); for later workflows, check the branch or environment suffix |
 | `Request contains a property with duplicate values` while adding credentials | Entra has not propagated the previous federated credential write. The bootstrap retries this condition with bounded backoff |
+| `Insufficient privileges` at `az ad app list` during bootstrap | Subscription Owner does not grant Microsoft Graph access. Confirm `AZURE_BOOTSTRAP_CLIENT_ID` identifies the app you configured, then grant that app the `Application.ReadWrite.All` **Application** permission with tenant-wide administrator consent. Under **API permissions**, its status must be **Granted for** the tenant |
+| `Failed to create the environment protection rule` with `HTTP 422` | The repository's plan does not support environment protection on private repositories. Bootstrap warns and creates the environments unprotected, so no run fails. To restore approvals, upgrade the plan or make the repository public, then re-run bootstrap |
+| `AuthorizationFailed` with `ABAC condition that is not fulfilled` while assigning a role | The bootstrap identity holds a constrained role-delegation condition, usually the portal default **Allow user to assign all roles except privileged administrator roles**, which excludes `User Access Administrator`. Edit its subscription assignment to **Allow user to assign all roles**, or extend the condition to cover `Storage Blob Data Contributor`, `Contributor` and `User Access Administrator`. Refreshing credentials does not help, and the workflow does not retry because the denial is permanent until the assignment changes |
 | `InsufficientScopes` calling Fabric | Tenant settings for service principals are not enabled. Run [step 5](#5-enable-the-fabric-tenant-settings-manual) |
 | `Unauthorized` on `fabric_connection` during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run [step 5](#5-enable-the-fabric-tenant-settings-manual), which drops the stale references |
-| `Insufficient privileges to complete the operation` from `az` | Your directory role is read-only. Activate Global Administrator or the narrower role in Privileged Identity Management |
+| `Insufficient privileges to complete the operation` from a manual `az` command | Your interactive directory role is read-only. Activate Global Administrator or the narrower role in Privileged Identity Management |
 | `/me request is only valid with delegated authentication flow` | A service principal cannot resolve a user. Pass an object ID rather than a UPN |
 | Workspaces exist but you cannot see them | You are not in one of the three security groups. Run `./scripts/Add-MeToFabricGroups.ps1`, then allow a few minutes for Fabric to notice. See [step 4](#4-assign-users-to-the-fabric-workspaces-manual) |
 | Git integration absent on prod only | Expected. Platform admins hold Viewer on prod, and the source-control panel is admin-only. Verify through the admin portal or the REST API |

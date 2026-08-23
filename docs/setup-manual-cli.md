@@ -180,8 +180,27 @@ hand this same state foundation to a pipeline. `./scripts/bootstrap.ps1
 -CreateServicePrincipal` does it as part of a lane bootstrap; the equivalent by
 hand, with an active Global Administrator role and Owner on the subscription:
 
+The identity needs these Microsoft Graph permissions. Each must be an
+**Application** permission with tenant-wide administrator consent, because the
+pipeline runs with no signed-in user and Delegated permissions never apply:
+
+| Permission | Required | Used for |
+|------------|----------|----------|
+| `Application.ReadWrite.All` | Yes | Creating the deployment application, its service principal and federated credentials |
+| `Group.ReadWrite.All` | Yes | Creating the three security groups and managing membership |
+| `DelegatedPermissionGrant.ReadWrite.All` | Yes | Consenting the deployment application's Graph permissions |
+| `AppRoleAssignment.ReadWrite.All` | No | Granting the deployment application `Directory.Read.All`. Bootstrap continues without it, and its holder can assign any application permission to any application, so leave it off |
+
+On the Azure side it needs **Owner** at subscription scope with **Allow user to
+assign all roles**. Resource-group scope is insufficient, and the portal's
+preselected **Allow user to assign all roles except privileged administrator
+roles** writes an ABAC condition that blocks the `User Access Administrator`
+delegation. The `az role assignment create` line below adds no condition.
+
 ```powershell
 $repo  = '<owner>/<repository>'
+$repoInfo = gh api "repos/$repo" | ConvertFrom-Json
+$repositorySubject = "$($repoInfo.owner.login)@$($repoInfo.owner.id)/$($repoInfo.name)@$($repoInfo.id)"
 $subId = az account show --query id -o tsv
 
 $appId = az ad app create --display-name sp-fabric-bootstrap `
@@ -205,7 +224,7 @@ az role assignment create --assignee $appId --role Owner `
 @{
     name      = 'github-bootstrap-main'
     issuer    = 'https://token.actions.githubusercontent.com'
-    subject   = "repo:${repo}:ref:refs/heads/main"
+    subject   = "repo:${repositorySubject}:ref:refs/heads/main"
     audiences = @('api://AzureADTokenExchange')
 } | ConvertTo-Json | Set-Content fic.json
 az ad app federated-credential create --id $appId --parameters fic.json
@@ -218,6 +237,19 @@ The credential goes in a file because `--parameters` takes inline JSON that Wind
 shells mangle on the way to `az`. If `admin-consent` fails immediately after
 `permission add`, wait a minute and re-run only that line; Entra has not finished
 propagating the permission request.
+
+The subject uses the numeric owner and repository IDs because GitHub issues its
+token in that immutable form. A subject built from names alone is rejected with
+`AADSTS700213`. Confirm the grants before handing the identity to a pipeline:
+
+```powershell
+az ad app permission list --id $appId -o table
+az role assignment list --assignee $appId --scope "/subscriptions/$subId" `
+    --query "[].{role:roleDefinitionName,scope:scope,condition:condition}" -o table
+```
+
+Every Graph permission must read as granted for the tenant, and the Owner row
+must report an empty condition.
 
 There is no client secret, so nothing here expires or needs rotating. The
 identity is only useful alongside the GitHub Actions lane, which is described in
@@ -284,7 +316,12 @@ settings.
 
 The defaults in `infra/platform/terraform.tfvars` cover the common case. Change the prefix, region or capacity topology there if you need to, then:
 
+`github_owner` has no default, because it names the real GitHub organisation or
+user that owns the items repository. Set it alongside the PAT; omit it and
+Terraform stops to prompt for it on every run.
+
 ```powershell
+$env:TF_VAR_github_owner = '<organisation or user owning the items repo>'
 $env:TF_VAR_github_pat = '<PAT with Contents read/write on the items repo>'
 
 cd infra\platform

@@ -76,6 +76,7 @@ $subscriptionId = Resolve-Value -Key 'AZURE_SUBSCRIPTION_ID' -AccountProperty 'i
 $cicdObjectId = Resolve-Value -Key 'FABRIC_CICD_SP_OBJECT_ID'
 $connectionId = Resolve-Value -Key 'FABRIC_GITHUB_CONNECTION_ID'
 $workspacePrefix = Resolve-Value -Key 'FABRIC_WORKSPACE_PREFIX'
+$itemsOwner = Resolve-Value -Key 'FABRIC_ITEMS_OWNER'
 
 if (-not $tenantId -or -not $subscriptionId) {
     throw 'Could not determine tenant or subscription. Run `az login`, or set AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID in .env.'
@@ -126,6 +127,17 @@ else {
     Remove-Item env:TF_VAR_workspace_prefix -ErrorAction SilentlyContinue
 }
 
+# One key feeds both roots, as the workflows do: the platform builds the source
+# control connection from it and each workspace syncs with the same owner.
+if ($itemsOwner) {
+    $env:TF_VAR_github_owner = $itemsOwner
+    $env:TF_VAR_git_owner_name = $itemsOwner
+}
+else {
+    Remove-Item env:TF_VAR_github_owner -ErrorAction SilentlyContinue
+    Remove-Item env:TF_VAR_git_owner_name -ErrorAction SilentlyContinue
+}
+
 # Provider configuration. ARM_USE_OIDC is deliberately NOT set: locally the
 # providers authenticate with the Azure CLI session, and setting it would make
 # Terraform look for a GitHub token that does not exist.
@@ -152,4 +164,10 @@ if ($env:TF_VAR_github_connection_id) {
 }
 else {
     Write-Host '  TF_VAR_github_connection_id             = (unset; Git integration will be skipped)'
+}
+if ($env:TF_VAR_github_owner) {
+    Write-Host "  TF_VAR_github_owner                     = $($env:TF_VAR_github_owner)"
+}
+else {
+    Write-Host '  TF_VAR_github_owner                     = (unset; Terraform will prompt for it)'
 }

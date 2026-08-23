@@ -331,9 +331,15 @@ if (-not $WantServicePrincipal) {
 }
 else {
     Write-Host "==> Creating app registration '$AppName'"
-    $AppId = az ad app list --display-name $AppName --query '[0].appId' -o tsv
+    $AppId = Invoke-Az @('ad', 'app', 'list', '--display-name', $AppName, '--query', '[0].appId', '-o', 'tsv')
     if (-not $AppId) {
-        $AppId = az ad app create --display-name $AppName --sign-in-audience AzureADMyOrg --query appId -o tsv
+        $AppId = Invoke-Az @(
+            'ad', 'app', 'create',
+            '--display-name', $AppName,
+            '--sign-in-audience', 'AzureADMyOrg',
+            '--query', 'appId',
+            '-o', 'tsv'
+        )
     }
 
     $SpObjectId = az ad sp list --filter "appId eq '$AppId'" --query '[0].id' -o tsv
@@ -371,7 +377,21 @@ else {
 
     $graphAppId = '00000003-0000-0000-c000-000000000000'
     $directoryReadAllRoleId = '7ab1d382-f21e-4acd-a863-ba3e13f7da61'
-    $permissionJson = Invoke-Az @('ad', 'app', 'permission', 'list', '--id', $AppId, '-o', 'json')
+    $arguments = @('ad', 'app', 'permission', 'list', '--id', $AppId, '-o', 'json')
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        $permissionJson = & az @arguments 2>&1
+        if ($LASTEXITCODE -eq 0) { break }
+
+        $message = $permissionJson -join [Environment]::NewLine
+        if ($attempt -eq 6 -or $message -notmatch '(?i)does not exist|not found|reference-property|temporar|try again|propagat') {
+            throw "az $($arguments -join ' ') failed: $message"
+        }
+
+        $global:LASTEXITCODE = 0
+        $delaySeconds = 5 * $attempt
+        Write-Host "    '$AppName' permissions are waiting for Entra propagation; retrying in ${delaySeconds}s"
+        Start-Sleep -Seconds $delaySeconds
+    }
     $permissions = ($permissionJson -join [Environment]::NewLine) | ConvertFrom-Json
     $hasDirectoryRead = $permissions |
         Where-Object { $_.resourceAppId -eq $graphAppId } |
@@ -609,6 +629,13 @@ function Add-RoleAssignment {
         }
 
         $message = $output -join [Environment]::NewLine
+        if ($message -match '(?i)ABAC condition.*not fulfilled') {
+            throw @"
+az $($arguments -join ' ') failed: $message
+
+The bootstrap identity has a conditional Azure role assignment that does not permit assigning '$Role' at '$Scope'. Grant the bootstrap identity Owner without a condition at subscription scope, or update its delegated role-assignment condition to allow Storage Blob Data Contributor, Contributor and User Access Administrator assignments to service principals.
+"@
+        }
         if ($attempt -eq 6 -or $message -notmatch '(?i)principal.*not found|does not exist|conflict|concurrent|temporar|try again') {
             throw "az $($arguments -join ' ') failed: $message"
         }

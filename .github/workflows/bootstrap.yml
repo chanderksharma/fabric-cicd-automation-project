@@ -10,7 +10,7 @@ on:
       storage_account_name:
         description: Globally unique Terraform state storage account name
         required: true
-        default: stcontosofabtfstate
+        default: stgfabcontosofstate
         type: string
       state_resource_group:
         description: Resource group for Terraform state and its perimeter
@@ -28,14 +28,14 @@ on:
         default: fabric-workspace-items
         type: string
       items_owner:
-        description: Owner of the items repository. Blank uses the owner of this repository
+        description: GitHub organisation or user owning the items repository. Blank uses the owner of this repository
         required: false
-        default: chanderksharma
+        default: 'fabric-cicd-org'
         type: string
       workspace_prefix:
-        description: 'Names the workspaces and their branches, e.g. my-contoso gives my-contoso-dev. Empty uses contoso-fab-gh-<environment>'
+        description: 'Names the workspaces and their branches, e.g. my-contoso gives my-contoso-dev. Empty uses contoso-fab-<environment>'
         required: false
-        default: ''
+        default: 'fab-contoso'
         type: string
       environment_reviewer:
         description: GitHub login that approves platform, test and prod
@@ -219,6 +219,7 @@ jobs:
       - name: Create GitHub environments and protections
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $false
           $repo = $env:GITHUB_REPOSITORY
           $reviewerLogin = $env:INPUT_ENVIRONMENT_REVIEWER
           $reviewerId = gh api "users/$reviewerLogin" --jq '.id' 2>$null
@@ -226,28 +227,52 @@ jobs:
               throw "GitHub reviewer '$reviewerLogin' was not found or is not visible to BOOTSTRAP_GITHUB_TOKEN."
           }
 
+          # Protection rules on a private repository need a paid plan. Without
+          # one the environments must still exist, because every job binds to one.
+          $protectionsSupported = $true
+
           foreach ($environment in @('platform', 'dev', 'test', 'prod')) {
               $protected = $environment -ne 'dev'
               $reviewers = @()
-              if ($protected) {
+              if ($protected -and $protectionsSupported) {
                   $reviewers = @(@{ type = 'User'; id = [long]$reviewerId })
               }
 
-              $body = @{
-                  wait_timer = 0
-                  prevent_self_review = $false
-                  reviewers = $reviewers
-                  deployment_branch_policy = if ($environment -eq 'prod') {
-                      @{ protected_branches = $false; custom_branch_policies = $true }
-                  }
-                  else { $null }
-              } | ConvertTo-Json -Depth 6 -Compress
+              $body = if ($protectionsSupported) {
+                  @{
+                      wait_timer = 0
+                      prevent_self_review = $false
+                      reviewers = $reviewers
+                      deployment_branch_policy = if ($environment -eq 'prod') {
+                          @{ protected_branches = $false; custom_branch_policies = $true }
+                      }
+                      else { $null }
+                  } | ConvertTo-Json -Depth 6 -Compress
+              }
+              else { '{}' }
 
-              $body | gh api --method PUT "repos/$repo/environments/$environment" --input - | Out-Null
+              $output = $body | gh api --method PUT "repos/$repo/environments/$environment" --input - 2>&1
               if ($LASTEXITCODE -ne 0) {
-                  throw "Failed to configure GitHub environment '$environment'."
+                  $message = ($output | Out-String).Trim()
+                  if ($message -notmatch 'billing plan|HTTP 422') {
+                      throw "Failed to configure GitHub environment '$environment'. $message"
+                  }
+
+                  Write-Host "::warning::This repository's plan does not support environment protection rules. Creating '$environment' without reviewers or branch policies; approvals must be enforced another way."
+                  $protectionsSupported = $false
+                  # An empty body is required: sending wait_timer or an empty
+                  # reviewers array still asks GitHub to write a protection rule.
+                  $output = '{}' | gh api --method PUT "repos/$repo/environments/$environment" --input - 2>&1
+                  if ($LASTEXITCODE -ne 0) {
+                      throw "Failed to create GitHub environment '$environment'. $(($output | Out-String).Trim())"
+                  }
               }
               Write-Host "Configured environment '$environment'."
+          }
+
+          if (-not $protectionsSupported) {
+              Write-Host '::warning::Skipping the prod deployment branch policy for the same reason.'
+              exit 0
           }
 
           $policiesJson = gh api "repos/$repo/environments/prod/deployment-branch-policies"
@@ -262,6 +287,7 @@ jobs:
                   throw "Failed to create the prod deployment policy for 'main'."
               }
           }
+          exit 0
 
       - name: Set GitHub Actions variables
         shell: pwsh
