@@ -346,13 +346,16 @@ so the items in them are lost. Pick it before step 6, not after.
 The workflow is idempotent: re-running it adopts existing state, groups,
 applications, repositories, branches, environments and variables.
 
-Two inputs are off or defaulted for a first build. `configure_tenant_settings`
-re-points the Fabric tenant settings at the current groups, which works only once
-the admin-API access described under
+One input is off for a first build. `configure_tenant_settings` re-points the
+Fabric tenant settings at the current groups, which works only once the admin-API
+access described under
 [Fabric administrator authorization](#fabric-administrator-authorization) exists.
-`propagation_wait_minutes` defaults to 12 and pauses before the dispatch so the
-tenant settings can propagate; it applies only when `trigger_apply` is on, and 0
-skips it.
+
+Nothing waits for propagation here. After a rebuild the deployment principal is
+new, and Fabric has to notice its membership of the admin group before the tenant
+settings apply to it. `terraform-apply` polls for that in its
+`Verify Fabric API access` step and continues the moment access works, so no
+fixed delay is spent.
 
 ### 4. Assign users to the Fabric workspaces (manual)
 

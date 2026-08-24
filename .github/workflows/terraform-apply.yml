@@ -143,7 +143,9 @@ jobs:
               throw 'Could not obtain a Fabric token for the deployment identity.'
           }
 
-          $deadline = (Get-Date).AddMinutes(5)
+          # Budget covers a rebuild, where the principal is new and Fabric has to
+          # notice its group membership before honouring the tenant settings.
+          $deadline = (Get-Date).AddMinutes(15)
           while ($true) {
               try {
                   Invoke-RestMethod -Method Get `

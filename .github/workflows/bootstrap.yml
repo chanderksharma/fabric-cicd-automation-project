@@ -52,11 +52,6 @@ on:
         required: false
         default: false
         type: boolean
-      propagation_wait_minutes:
-        description: Minutes to wait before dispatching terraform-apply, so manually enabled Fabric tenant settings can propagate. Use 0 to skip
-        required: false
-        default: '12'
-        type: string
 
 permissions:
   id-token: write
@@ -81,7 +76,6 @@ env:
   INPUT_ITEMS_OWNER: ${{ inputs.items_owner }}
   INPUT_WORKSPACE_PREFIX: ${{ inputs.workspace_prefix }}
   INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
-  INPUT_PROPAGATION_WAIT_MINUTES: ${{ inputs.propagation_wait_minutes }}
 
 jobs:
   bootstrap:
@@ -354,18 +348,6 @@ jobs:
               -IncludeServicePrincipal `
               -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
           "FABRIC_TENANT_SETTINGS_CONFIGURED=true" >> $env:GITHUB_ENV
-
-      - name: Wait for Fabric tenant settings to propagate
-        if: inputs.trigger_apply && inputs.propagation_wait_minutes != '0'
-        shell: pwsh
-        # Capped below the job timeout, which this sleep counts against.
-        run: |
-          $minutes = 0
-          if (-not [int]::TryParse($env:INPUT_PROPAGATION_WAIT_MINUTES, [ref]$minutes) -or $minutes -lt 0 -or $minutes -gt 30) {
-              throw 'propagation_wait_minutes must be an integer from 0 to 30.'
-          }
-          Write-Host "Waiting $minutes minutes for Fabric tenant settings to propagate."
-          Start-Sleep -Seconds ($minutes * 60)
 
       - name: Dispatch Terraform deployment
         if: inputs.trigger_apply
