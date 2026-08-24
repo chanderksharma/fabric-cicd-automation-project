@@ -293,6 +293,43 @@ function Remove-DeploymentPipelines {
     }
 }
 
+# Unknown counts as present, so an unreadable list never costs a state file.
+function Test-FabricWorkspaceExists {
+    param([Parameter(Mandatory)][string] $DisplayName)
+
+    $list = Invoke-AzJson @('rest', '--method', 'GET', '--url', "$FabricApi/v1/workspaces", '--resource', $FabricApi, '-o', 'json')
+    if (-not $list -or $list.PSObject.Properties.Name -notcontains 'value') { return $true }
+
+    return @($list.value | Where-Object {
+            $_.PSObject.Properties.Name -contains 'displayName' -and $_.displayName -eq $DisplayName
+        }).Count -gt 0
+}
+
+function Remove-StateBlob {
+    param([Parameter(Mandatory)][string] $Key)
+
+    if (-not $StateStorageAccount) {
+        Write-Host "    state '$Key' kept; pass -StateStorageAccount to discard it" -ForegroundColor Yellow
+        return
+    }
+    if (-not $RemovePlatformCmdlet.ShouldProcess("$Key in $StateContainer", 'delete state blob')) { return }
+
+    $exitCode = Invoke-AzQuiet @(
+        'storage', 'blob', 'delete',
+        '--account-name', $StateStorageAccount,
+        '--container-name', $StateContainer,
+        '--name', $Key,
+        '--auth-mode', 'login'
+    )
+    if ($exitCode -eq 0) {
+        Write-Host "    discarded stale state '$Key'"
+        Record -Kind 'state' -Name $Key -Status 'discarded'
+    }
+    else {
+        Record-Failure -Kind 'state' -Name $Key -Reason 'delete failed; the next apply will refresh resources that no longer exist'
+    }
+}
+
 if ($OrphansOnly) {
     Write-Step 'Skipping Terraform (-OrphansOnly): deleting by name instead'
     Write-Step 'Deleting deployment pipelines (they block workspace deletion)'
@@ -347,6 +384,15 @@ else {
     # and aborts the destroy once the capacity itself is gone.
     foreach ($environment in $Environments) {
         Write-Host "--- $environment" -ForegroundColor DarkGray
+
+        # Fabric answers InsufficientPrivileges rather than 404 for a workspace
+        # that is gone, so a refresh cannot retire the state entry by itself.
+        if (-not (Test-FabricWorkspaceExists -DisplayName "$NamePrefix-$environment")) {
+            Write-Host '    workspace already gone'
+            Remove-StateBlob -Key "workspace-$environment.tfstate"
+            continue
+        }
+
         Invoke-TerraformDestroy `
             -Directory 'infra/workspace' `
             -BackendConfig "envs/$environment.backend.hcl" `
