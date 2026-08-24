@@ -283,6 +283,12 @@ They also accept a service principal, so the step can be automated. That require
 
 With that in place, run `bootstrap.yml` with `configure_tenant_settings` enabled and the workflow re-points the settings at the current groups itself. Both APIs are in preview, so the script keeps the device-code path as a fallback.
 
+### Azure RBAC for the deployment identity
+
+Between runs the deployment identity holds only `Storage Blob Data Contributor` on the state account and `Reader` on the subscription. `Contributor` and `User Access Administrator` are granted at the start of each `terraform-apply` and `terraform-destroy` run by `scripts/Set-DeploymentRbac.ps1` and removed when it finishes, including when it fails. The bootstrap identity performs both, because a principal cannot elevate itself.
+
+`Reader` stays in place so `terraform-plan` can refresh on pull requests. Both workflows pass `manage_cicd_role_assignments=false`, which stops the platform root from recreating the same two roles as standing assignments on the capacity resource group.
+
 ### GitHub plan requirements
 
 The workflow creates `platform`, `dev`, `test` and `prod` environments. `platform`, `test` and `prod` use the selected reviewer; `prod` accepts deployments only from `main`. Environment protection on a private repository requires a GitHub plan that supports it. On a plan without it, GitHub rejects the protection rules with `HTTP 422`; bootstrap then creates the environments unprotected and continues, so approvals and the `main` restriction are not enforced. Make the repository public, upgrade the plan, or gate promotion another way.

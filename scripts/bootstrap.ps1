@@ -657,11 +657,9 @@ if (-not $WantServicePrincipal) {
 else {
     Write-Host '==> Assigning Azure RBAC to the service principal'
     Add-RoleAssignment -Role 'Storage Blob Data Contributor' -Scope $StorageAccountId
-    # Contributor creates the Fabric capacity resource group; User Access
-    # Administrator lets the platform root manage role assignments. Narrow both to a
-    # pre-created resource group if subscription-scope grants are not permitted.
-    Add-RoleAssignment -Role 'Contributor' -Scope "/subscriptions/$SubscriptionId"
-    Add-RoleAssignment -Role 'User Access Administrator' -Scope "/subscriptions/$SubscriptionId"
+    # Only read access stands. Contributor and User Access Administrator are lent
+    # per run by scripts/Set-DeploymentRbac.ps1 and taken back at the end.
+    Add-RoleAssignment -Role 'Reader' -Scope "/subscriptions/$SubscriptionId"
 }
 
 # -----------------------------------------------------------------------------

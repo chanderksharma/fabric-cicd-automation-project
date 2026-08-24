@@ -97,6 +97,9 @@ jobs:
       AZURE_BOOTSTRAP_TENANT_ID: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
       AZURE_BOOTSTRAP_SUBSCRIPTION_ID: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Check bootstrap identity
         run: |
           $required = @(
@@ -137,6 +140,45 @@ jobs:
           else {
               Write-Host "::notice::'$appName' does not exist, so the gh lane is already dismantled. Skipping resource teardown; re-create it with the bootstrap workflow."
           }
+
+      - name: Grant deployment roles
+        if: steps.lane.outputs.lane_present == 'true'
+        env:
+          DEPLOYMENT_SP_OBJECT_ID: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+          TARGET_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          ./scripts/Set-DeploymentRbac.ps1 `
+              -Action Grant `
+              -PrincipalObjectId $env:DEPLOYMENT_SP_OBJECT_ID `
+              -SubscriptionId $env:TARGET_SUBSCRIPTION_ID
+
+  revoke:
+    name: revoke deployment RBAC
+    runs-on: [self-hosted, Windows, X64]
+    needs: [preflight, destroy, cleanup]
+    # Unconditional, so a failed teardown cannot leave the identity elevated.
+    if: ${{ always() && needs.preflight.result == 'success' }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login (bootstrap identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Revoke deployment roles
+        env:
+          DEPLOYMENT_SP_OBJECT_ID: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+          TARGET_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          ./scripts/Set-DeploymentRbac.ps1 `
+              -Action Revoke `
+              -PrincipalObjectId $env:DEPLOYMENT_SP_OBJECT_ID `
+              -SubscriptionId $env:TARGET_SUBSCRIPTION_ID
 
   destroy:
     name: dismantle gh lane

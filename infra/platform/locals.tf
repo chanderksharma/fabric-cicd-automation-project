@@ -71,7 +71,9 @@ locals {
   # Azure-plane RBAC. Humans get read-only on the capacity resource group;
   # all mutation flows through the CI/CD principal.
   azure_role_assignments = merge(
-    {
+    # Skipped when the run holds these roles only for its duration, since
+    # recreating them here would put the standing grant straight back.
+    var.manage_cicd_role_assignments ? {
       cicd_contributor = {
         scope                = azurerm_resource_group.fabric.id
         role_definition_name = "Contributor"
@@ -86,6 +88,8 @@ locals {
         principal_type       = local.admin_principal_type
         description          = "Required so Terraform can manage role assignments inside this resource group."
       }
+    } : {},
+    {
       platform_admins_owner = {
         scope                = azurerm_resource_group.fabric.id
         role_definition_name = "Reader"

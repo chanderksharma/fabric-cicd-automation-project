@@ -196,6 +196,20 @@ variable "create_deployment_pipeline" {
   default     = false
 }
 
+variable "manage_cicd_role_assignments" {
+  description = <<-EOT
+    Grant the deployment principal Contributor and User Access Administrator on
+    the capacity resource group.
+
+    Set false when the run is elevated just in time and de-elevated afterwards:
+    these assignments are standing grants, so recreating them here would defeat
+    that. The manual lane leaves it true, because the operator's own access is
+    what the estate is built with.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Base tags applied to every resource. managed-by is forced to terraform."
   type        = map(string)

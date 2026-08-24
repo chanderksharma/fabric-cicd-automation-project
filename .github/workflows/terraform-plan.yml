@@ -213,7 +213,9 @@ jobs:
               }
           }
           $createPipelineValue = $createPipeline.ToString().ToLowerInvariant()
-          "TF_CLI_ARGS_plan=-var=create_deployment_pipeline=$createPipelineValue" |
+          # Must match what terraform-apply passes, or the plan advertises role
+          # assignments the apply will never make.
+          "TF_CLI_ARGS_plan=-var=create_deployment_pipeline=$createPipelineValue -var=manage_cicd_role_assignments=false" |
             Add-Content -Path $env:GITHUB_ENV -Encoding utf8
 
       - name: Terraform init

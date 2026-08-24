@@ -43,12 +43,43 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # The deployment identity holds no standing Azure RBAC. These two jobs lend it
+  # Contributor and User Access Administrator for the length of this run only,
+  # and run as the bootstrap identity because a principal cannot elevate itself.
+  # ---------------------------------------------------------------------------
+  elevate:
+    name: grant deployment RBAC
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login (bootstrap identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Grant deployment roles
+        env:
+          DEPLOYMENT_SP_OBJECT_ID: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+          TARGET_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          ./scripts/Set-DeploymentRbac.ps1 `
+              -Action Grant `
+              -PrincipalObjectId $env:DEPLOYMENT_SP_OBJECT_ID `
+              -SubscriptionId $env:TARGET_SUBSCRIPTION_ID
+
+  # ---------------------------------------------------------------------------
   # Capacity and Azure-plane RBAC. Shared by every environment, so it must
   # converge before any workspace is planned.
   # ---------------------------------------------------------------------------
   apply-platform:
     name: apply platform
     runs-on: [self-hosted, Windows, X64]
+    needs: elevate
     environment: platform
     concurrency:
       group: terraform-apply-platform
@@ -151,7 +182,8 @@ jobs:
         # Workspaces do not exist during the first platform pass.
         run: |
           terraform plan -no-color "-out=tfplan.binary" `
-            -var=create_deployment_pipeline=false
+            -var=create_deployment_pipeline=false `
+            -var=manage_cicd_role_assignments=false
 
       - name: Terraform apply
         working-directory: infra/platform
@@ -480,5 +512,35 @@ jobs:
         working-directory: infra/platform
         run: |
           terraform plan -no-color "-out=tfplan.binary" `
-            -var=create_deployment_pipeline=true
+            -var=create_deployment_pipeline=true `
+            -var=manage_cicd_role_assignments=false
           terraform apply -no-color -auto-approve tfplan.binary
+
+  revoke:
+    name: revoke deployment RBAC
+    runs-on: [self-hosted, Windows, X64]
+    needs: [elevate, apply-platform, apply-dev, apply-test, apply-prod, apply-deployment-pipeline]
+    # Runs even when an earlier job failed, so a broken run cannot leave the
+    # deployment identity elevated.
+    if: ${{ always() && needs.elevate.result == 'success' }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login (bootstrap identity)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_BOOTSTRAP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_BOOTSTRAP_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_BOOTSTRAP_SUBSCRIPTION_ID }}
+
+      - name: Revoke deployment roles
+        env:
+          DEPLOYMENT_SP_OBJECT_ID: ${{ vars.FABRIC_CICD_SP_OBJECT_ID }}
+          TARGET_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          ./scripts/Set-DeploymentRbac.ps1 `
+              -Action Revoke `
+              -PrincipalObjectId $env:DEPLOYMENT_SP_OBJECT_ID `
+              -SubscriptionId $env:TARGET_SUBSCRIPTION_ID

@@ -585,12 +585,9 @@ assign_role() {
 echo "==> Assigning Azure RBAC to the service principal"
 # Read/write on the state blobs.
 assign_role "Storage Blob Data Contributor" "$SA_ID"
-# Contributor is required to create the Fabric capacity resource group.
-# User Access Administrator is required because the platform root manages role
-# assignments. Narrow both to a pre-created resource group if your governance
-# model forbids subscription-scope grants.
-assign_role "Contributor" "/subscriptions/$SUBSCRIPTION_ID"
-assign_role "User Access Administrator" "/subscriptions/$SUBSCRIPTION_ID"
+# Only read access stands. Contributor and User Access Administrator are lent for
+# the length of a run by scripts/Set-DeploymentRbac.ps1 and taken back after it.
+assign_role "Reader" "/subscriptions/$SUBSCRIPTION_ID"
 
 # -----------------------------------------------------------------------------
 # 5. Consistency check
