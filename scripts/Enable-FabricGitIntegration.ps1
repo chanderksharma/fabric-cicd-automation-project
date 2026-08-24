@@ -259,7 +259,13 @@ function Test-SettingConfigured {
 
     $isEnabled = @($enabledGroups | Where-Object { $_.graphId -eq $ExpectedGroupId }).Count -gt 0
     $isExcluded = @($excludedGroups | Where-Object { $_.graphId -eq $ExpectedGroupId }).Count -gt 0
-    return $isEnabled -and -not $isExcluded
+
+    # Fabric rejects calls while any listed id is dead, so a setting that already
+    # names the expected group still needs the rewrite that drops the others.
+    $hasDeadGroup = @(@($enabledGroups) + @($excludedGroups) |
+            Where-Object { -not (Test-GroupExists -GraphId $_.graphId) }).Count -gt 0
+
+    return $isEnabled -and -not $isExcluded -and -not $hasDeadGroup
 }
 
 # --------------------------------------------------------------------------
