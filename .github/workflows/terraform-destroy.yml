@@ -209,6 +209,7 @@ jobs:
               -WorkspacePrefix $env:TF_VAR_workspace_prefix `
               -SubscriptionId $env:ARM_SUBSCRIPTION_ID `
               -StateResourceGroup $env:STATE_RESOURCE_GROUP `
+              -StateStorageAccount $env:STATE_STORAGE_ACCOUNT `
               -ItemsRepoPath $itemsRepoPath `
               -IncludeBranches `
               -KeepServicePrincipal `

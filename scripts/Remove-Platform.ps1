@@ -76,6 +76,11 @@ param(
     [string] $AppName = '',
 
     [string] $StateResourceGroup = 'rg-terraform-state',
+
+    # Overrides the account named in the committed backend files, which carry the
+    # manual lane's value. Empty keeps whatever the backend file says.
+    [string] $StateStorageAccount = '',
+
     [string] $StateLockName = 'terraform-state-protect',
 
     [string] $ItemsRepoPath = '',
@@ -222,10 +227,18 @@ function Invoke-TerraformDestroy {
 
     Push-Location (Join-Path $RepoRoot $Directory)
     try {
-        & terraform init -reconfigure -no-color `
-            -backend-config="$BackendConfig" `
-            -backend-config="container_name=$StateContainer" `
-            -backend-config="key=$StateKey"
+        $initArgs = @(
+            'init', '-reconfigure', '-no-color'
+            "-backend-config=$BackendConfig"
+            "-backend-config=resource_group_name=$StateResourceGroup"
+            "-backend-config=container_name=$StateContainer"
+            "-backend-config=key=$StateKey"
+        )
+        if ($StateStorageAccount) {
+            $initArgs += "-backend-config=storage_account_name=$StateStorageAccount"
+        }
+
+        & terraform @initArgs
         if ($LASTEXITCODE -ne 0) {
             Record-Failure -Kind 'terraform init' -Name $Label -Reason 'init failed; state may be unreachable behind the perimeter (run scripts/Grant-MyIpToPerimeter.ps1)'
             return $false
