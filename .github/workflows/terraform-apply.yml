@@ -101,6 +101,42 @@ jobs:
               throw 'Repository secret FABRIC_GITHUB_PAT is required.'
           }
 
+      - name: Verify Fabric API access
+        # Surfaces the tenant-setting cause here, instead of as a bare
+        # Unauthorized from the provider partway through terraform plan.
+        run: |
+          $token = az account get-access-token `
+              --resource https://api.fabric.microsoft.com `
+              --query accessToken -o tsv
+          if ($LASTEXITCODE -ne 0 -or -not $token) {
+              throw 'Could not obtain a Fabric token for the deployment identity.'
+          }
+
+          $deadline = (Get-Date).AddMinutes(5)
+          while ($true) {
+              try {
+                  Invoke-RestMethod -Method Get `
+                      -Uri 'https://api.fabric.microsoft.com/v1/connections' `
+                      -Headers @{ Authorization = "Bearer $token" } | Out-Null
+                  Write-Host 'Fabric API access confirmed for the deployment identity.'
+                  break
+              }
+              catch {
+                  $status = [int]$_.Exception.Response.StatusCode
+                  if ($status -ne 401 -and $status -ne 403) { throw }
+                  if ((Get-Date) -ge $deadline) {
+                      throw (@(
+                          "The deployment identity cannot call the Fabric API ($status)."
+                          'Either the service principal tenant settings are off, or they still name a security group that was deleted and rebuilt, which Fabric tracks by object ID rather than by name.'
+                          "Fix: run ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -PrincipalObjectId $env:TF_VAR_cicd_service_principal_object_id from a workstation as a Fabric administrator, then re-dispatch."
+                      ) -join [Environment]::NewLine)
+                  }
+                  Write-Host "  $status; not propagated yet, retrying in 30s"
+                  Start-Sleep -Seconds 30
+              }
+          }
+          exit 0
+
       - name: Terraform init
         working-directory: infra/platform
         run: |

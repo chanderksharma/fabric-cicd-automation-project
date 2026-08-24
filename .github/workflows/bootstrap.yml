@@ -47,6 +47,11 @@ on:
         required: true
         default: false
         type: boolean
+      configure_tenant_settings:
+        description: Re-point the Fabric tenant settings at the current groups. Requires the admin-API tenant settings to be enabled for the bootstrap identity
+        required: false
+        default: false
+        type: boolean
       propagation_wait_minutes:
         description: Minutes to wait before dispatching terraform-apply, so manually enabled Fabric tenant settings can propagate. Use 0 to skip
         required: false
@@ -222,6 +227,18 @@ jobs:
           "DEPLOYMENT_CLIENT_ID=$clientId" >> $env:GITHUB_ENV
           "DEPLOYMENT_OBJECT_ID=$objectId" >> $env:GITHUB_ENV
 
+      - name: Re-point Fabric tenant settings
+        if: inputs.configure_tenant_settings
+        shell: pwsh
+        # Runs as the bootstrap identity, so the admin-API tenant settings must
+        # name it. The deployment identity stays least privileged.
+        run: |
+          ./scripts/Enable-FabricGitIntegration.ps1 `
+              -Auth ServicePrincipal `
+              -IncludeServicePrincipal `
+              -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
+          "FABRIC_TENANT_SETTINGS_CONFIGURED=true" >> $env:GITHUB_ENV
+
       - name: Create GitHub environments and protections
         shell: pwsh
         run: |
@@ -359,13 +376,24 @@ jobs:
       - name: Bootstrap summary
         shell: pwsh
         run: |
+          $command = "scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID"
+          $tenantNote = if ($env:FABRIC_TENANT_SETTINGS_CONFIGURED -eq 'true') {
+              'Fabric tenant settings were re-pointed at the current security groups by this run. Nothing further is needed.'
+          }
+          elseif ($env:FABRIC_GROUPS_CREATED -eq 'true') {
+              "REQUIRED: the security groups were recreated, so the Fabric tenant settings still name groups that no longer exist and every apply will fail with ``Unauthorized``. Run ``$command`` from a workstation as a Fabric administrator, then re-run ``scripts/Add-MeToFabricGroups.ps1``."
+          }
+          else {
+              "Still manual, if the tenant settings are not already enabled: run ``$command`` from a workstation as a Fabric administrator."
+          }
+
           @(
               '## Bootstrap complete'
               ''
               "Permanent deployment identity: ``$env:DEPLOYMENT_CLIENT_ID``"
               "State: ``$env:INPUT_STORAGE_ACCOUNT_NAME/tfstate-gh``"
               ''
-              "Still manual: run ``scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID`` from a workstation as a Fabric administrator. Git integration and service-principal API access stay disabled until you do."
+              $tenantNote
               ''
               "Remove ``BOOTSTRAP_GITHUB_TOKEN`` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
           ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8

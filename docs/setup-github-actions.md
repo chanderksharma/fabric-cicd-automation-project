@@ -192,8 +192,9 @@ permission to any application, which is a large privilege for a CI credential.
 ### Fabric
 
 You need the **Fabric Administrator** role, or Power BI Administrator, or Global
-Administrator. Tenant settings cannot be changed by a service principal, so this
-role belongs to a person and the step stays manual.
+Administrator. By default this step is manual, because a fresh tenant grants no
+service principal access to the admin API. Once that access is granted it can be
+automated; see [Fabric administrator authorization](#fabric-administrator-authorization).
 
 Running `scripts/Enable-FabricGitIntegration.ps1` is a prerequisite of
 `terraform-apply`, not an optional extra: Fabric blocks service principals and
@@ -276,7 +277,11 @@ The permanent deployment application needs no Microsoft Graph permission. Bootst
 
 ### Fabric administrator authorization
 
-Fabric tenant-setting administration requires a delegated `Tenant.ReadWrite.All` token, and application credentials cannot remove that boundary. A service principal is refused even when the admin API tenant settings are enabled for it, so the workflows do not attempt it and the step is manual. See [step 5](#5-enable-the-fabric-tenant-settings-manual).
+The tenant-settings APIs accept a signed-in Fabric administrator through a delegated `Tenant.ReadWrite.All` token, which is what `scripts/Enable-FabricGitIntegration.ps1` obtains with a device code by default. See [step 5](#5-enable-the-fabric-tenant-settings-manual).
+
+They also accept a service principal, so the step can be automated. That requires a Fabric administrator to enable **Service principals can access read-only admin APIs** and **Service principals can access admin APIs used for updates** for the bootstrap identity, and the bootstrap app registration must carry no admin-consent-required Fabric permissions, which silently blocks service principal authentication. Scope those two settings to the whole organisation or to a group that is never deleted; scoping them to `sg-fabric-platform-admins` means deleting that group locks the automation out of the API it needs to repair itself.
+
+With that in place, run `bootstrap.yml` with `configure_tenant_settings` enabled and the workflow re-points the settings at the current groups itself. Both APIs are in preview, so the script keeps the device-code path as a fallback.
 
 ### GitHub plan requirements
 
@@ -334,6 +339,14 @@ so the items in them are lost. Pick it before step 6, not after.
 
 The workflow is idempotent: re-running it adopts existing state, groups,
 applications, repositories, branches, environments and variables.
+
+Two inputs are off or defaulted for a first build. `configure_tenant_settings`
+re-points the Fabric tenant settings at the current groups, which works only once
+the admin-API access described under
+[Fabric administrator authorization](#fabric-administrator-authorization) exists.
+`propagation_wait_minutes` defaults to 12 and pauses before the dispatch so the
+tenant settings can propagate; it applies only when `trigger_apply` is on, and 0
+skips it.
 
 ### 4. Assign users to the Fabric workspaces (manual)
 

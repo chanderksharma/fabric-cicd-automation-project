@@ -18,8 +18,10 @@
     Global Administrator. These settings are tenant-wide, so they are scoped to
     a group by default rather than the whole organisation.
 
-    This is an interactive step and CI does not run it. A service principal is
-    refused by the admin API even with the admin API tenant settings enabled.
+    -Auth ServicePrincipal skips the device code and uses the current Azure CLI
+    identity instead, which is how CI runs this unattended. It works only after a
+    Fabric administrator has enabled the two admin-API tenant settings for that
+    principal.
 
 .EXAMPLE
     ./scripts/Enable-FabricGitIntegration.ps1
@@ -54,6 +56,11 @@ param(
     # Apply tenant-wide instead of scoping to a security group.
     [switch] $WholeTenant,
 
+    # How the admin API is reached. Auto probes the signed-in identity, which is
+    # what lets CI run unattended, then falls back to a device code.
+    [ValidateSet('Auto', 'ServicePrincipal', 'DeviceCode')]
+    [string] $Auth = 'Auto',
+
     [string] $AppName = 'fabric-admin-cli',
     [string] $TenantId
 )
@@ -73,16 +80,43 @@ if (-not $TenantId) { $TenantId = az account show --query tenantId -o tsv }
 # --------------------------------------------------------------------------
 # 1. A token for the admin API
 # --------------------------------------------------------------------------
-# Only a signed-in Fabric administrator can do this. A service principal is
-# refused even with the admin API tenant settings enabled, so this script is
-# interactive by design and CI does not run it.
 $accessToken = $null
 
-if ($env:CI -or $env:TF_IN_AUTOMATION) {
-    throw 'This script needs an interactive Fabric administrator and cannot run unattended. Run it from a workstation, then dispatch the workflow.'
+# A service principal is accepted only once a Fabric administrator has enabled the
+# two admin-API tenant settings for it, so the result is probed rather than
+# assumed. A signed-in user normally fails this probe, because the Azure CLI's own
+# app carries only user_impersonation, and falls through to the device code.
+if ($Auth -ne 'DeviceCode') {
+    $candidate = az account get-access-token --resource $FabricResource --query accessToken -o tsv 2>$null
+    if ($LASTEXITCODE -ne 0) { $candidate = $null }
+    $global:LASTEXITCODE = 0
+
+    if ($candidate) {
+        try {
+            Invoke-RestMethod -Method Get -Uri $AdminRoot -Headers @{ Authorization = "Bearer $candidate" } | Out-Null
+            $accessToken = $candidate
+            Write-Host 'Reached the admin API as the signed-in identity.'
+        }
+        catch {
+            if ($Auth -eq 'ServicePrincipal') {
+                throw (@(
+                        "The signed-in identity cannot reach the Fabric admin API: $($_.Exception.Message)"
+                        'A Fabric administrator must enable "Service principals can access read-only admin APIs" and "Service principals can access admin APIs used for updates" for it.'
+                        'The app registration must also carry no admin-consent-required Fabric permissions, which silently blocks service principal authentication.'
+                    ) -join [Environment]::NewLine)
+            }
+            Write-Host '  signed-in identity cannot reach the admin API; falling back to a device code'
+        }
+    }
+    elseif ($Auth -eq 'ServicePrincipal') {
+        throw 'No Azure CLI session to take a Fabric token from. Run az login first.'
+    }
 }
 
 if (-not $accessToken) {
+    if ($env:CI -or $env:TF_IN_AUTOMATION) {
+        throw 'Device code sign-in needs a human and cannot run unattended. Run this script from a workstation, or pass -Auth ServicePrincipal once the admin-API tenant settings allow it.'
+    }
     # ----------------------------------------------------------------------
     # App registration with the admin scope
     # ----------------------------------------------------------------------

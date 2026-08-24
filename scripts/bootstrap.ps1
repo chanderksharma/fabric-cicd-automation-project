@@ -189,12 +189,14 @@ function Confirm-Group {
     }
     $oid = az ad group create --display-name $Name --mail-nickname $Name --query id -o tsv
     $GroupObjectIds[$Name] = $oid
+    $script:GroupsCreated = $true
     Write-Host "    created  $Name  ($oid)"
     return $true
 }
 
 Write-Host '==> Checking Entra security groups'
 $GroupObjectIds = @{}
+$script:GroupsCreated = $false
 $groupsOk = $true
 foreach ($g in @($AdminGroup, $EngineerGroup, $AnalystGroup)) {
     if (-not (Confirm-Group -Name $g)) { $groupsOk = $false }
@@ -207,6 +209,9 @@ if ($groupsOk -and $env:GITHUB_ENV) {
         "FABRIC_ADMIN_GROUP_ID=$($GroupObjectIds[$AdminGroup])"
         "FABRIC_ENGINEER_GROUP_ID=$($GroupObjectIds[$EngineerGroup])"
         "FABRIC_ANALYST_GROUP_ID=$($GroupObjectIds[$AnalystGroup])"
+        # A recreated group is a new object ID, and the Fabric tenant settings
+        # still name the old one.
+        "FABRIC_GROUPS_CREATED=$($script:GroupsCreated.ToString().ToLowerInvariant())"
     ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
 }
 
