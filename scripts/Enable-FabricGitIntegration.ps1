@@ -217,7 +217,7 @@ function Test-GroupExists {
     param([Parameter(Mandatory)][string] $GraphId)
 
     if (-not $script:GroupExists.ContainsKey($GraphId)) {
-        & az ad group show --group $GraphId --query id -o tsv *>&1 | Out-Null
+        & az ad group show --group $GraphId --query id -o tsv 2>$null | Out-Null
         $script:GroupExists[$GraphId] = $LASTEXITCODE -eq 0
         $global:LASTEXITCODE = 0
     }
