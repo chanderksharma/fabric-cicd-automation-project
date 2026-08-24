@@ -403,14 +403,32 @@ else {
         ForEach-Object { $_.resourceAccess } |
         Where-Object { $_.id -eq $directoryReadAllRoleId -and $_.type -eq 'Role' }
     if (-not $hasDirectoryRead) {
-        Invoke-Az @(
+        $addArguments = @(
             'ad', 'app', 'permission', 'add',
             '--id', $AppId,
             '--api', $graphAppId,
             '--api-permissions', "$directoryReadAllRoleId=Role",
             '-o', 'none'
-        ) | Out-Null
-        Write-Host '    added Microsoft Graph Directory.Read.All application permission'
+        )
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
+            $addOutput = & az @addArguments 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host '    added Microsoft Graph Directory.Read.All application permission'
+                break
+            }
+
+            $global:LASTEXITCODE = 0
+            $addMessage = ($addOutput | Out-String).Trim()
+            if ($attempt -eq 6 -or $addMessage -notmatch '(?i)does not exist|not found|reference-property|temporar|try again|propagat') {
+                Write-Host "    could not add Directory.Read.All: $addMessage" -ForegroundColor Yellow
+                Write-Host '    continuing: Terraform receives the group object IDs directly and does not read the directory' -ForegroundColor Yellow
+                break
+            }
+
+            $delaySeconds = 5 * $attempt
+            Write-Host "    '$AppName' is waiting for Entra propagation; retrying in ${delaySeconds}s"
+            Start-Sleep -Seconds $delaySeconds
+        }
     }
 
     # Terraform takes the group object IDs as inputs, so this grant is a

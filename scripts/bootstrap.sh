@@ -471,12 +471,27 @@ if [[ "$(az ad app permission list \
   --id "$APP_ID" \
   --query "[?resourceAppId=='${GRAPH_APP_ID}'].resourceAccess[] | [?id=='${DIRECTORY_READ_ALL_ROLE_ID}' && type=='Role'] | length(@)" \
   -o tsv)" != "1" ]]; then
-  az ad app permission add \
-    --id "$APP_ID" \
-    --api "$GRAPH_APP_ID" \
-    --api-permissions "${DIRECTORY_READ_ALL_ROLE_ID}=Role" \
-    -o none
-  echo "    added Microsoft Graph Directory.Read.All application permission"
+  # A newly created app is not resolvable by Graph straight away, and this
+  # permission is optional, so a lost race is reported rather than fatal.
+  for attempt in 1 2 3 4 5 6; do
+    if add_output=$(az ad app permission add \
+      --id "$APP_ID" \
+      --api "$GRAPH_APP_ID" \
+      --api-permissions "${DIRECTORY_READ_ALL_ROLE_ID}=Role" \
+      -o none 2>&1); then
+      echo "    added Microsoft Graph Directory.Read.All application permission"
+      break
+    fi
+
+    if [[ $attempt -eq 6 ]] || ! grep -qiE 'does not exist|not found|reference-property|temporar|try again|propagat' <<<"$add_output"; then
+      echo "    could not add Directory.Read.All: $add_output"
+      echo "    continuing: Terraform receives the group object IDs directly and does not read the directory"
+      break
+    fi
+
+    echo "    '$APP_NAME' is waiting for Entra propagation; retrying in $((5 * attempt))s"
+    sleep $((5 * attempt))
+  done
 fi
 
 echo "    appId (client id)      : $APP_ID"
