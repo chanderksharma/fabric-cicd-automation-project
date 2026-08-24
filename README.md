@@ -155,7 +155,8 @@ Choose one operating lane. For the GitHub Actions lane, configure the federated 
 Either lane must run `scripts/Enable-FabricGitIntegration.ps1` before the first
 Terraform apply. Fabric blocks service principals and GitHub sync by default, and
 only a signed-in administrator can lift that, so no workflow and no service
-principal can do it for you.
+principal can do it for you. The GitHub Actions lane must pass
+`-IncludeServicePrincipal`; a bare invocation enables Git integration only.
 
 The manual lane uses two scripts because they have different lifetimes:
 

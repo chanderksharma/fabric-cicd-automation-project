@@ -47,6 +47,11 @@ on:
         required: true
         default: false
         type: boolean
+      propagation_wait_minutes:
+        description: Minutes to wait before dispatching terraform-apply, so manually enabled Fabric tenant settings can propagate. Use 0 to skip
+        required: false
+        default: '12'
+        type: string
 
 permissions:
   id-token: write
@@ -71,6 +76,7 @@ env:
   INPUT_ITEMS_OWNER: ${{ inputs.items_owner }}
   INPUT_WORKSPACE_PREFIX: ${{ inputs.workspace_prefix }}
   INPUT_ENVIRONMENT_REVIEWER: ${{ inputs.environment_reviewer }}
+  INPUT_PROPAGATION_WAIT_MINUTES: ${{ inputs.propagation_wait_minutes }}
 
 jobs:
   bootstrap:
@@ -331,6 +337,18 @@ jobs:
               }
           }
 
+      - name: Wait for Fabric tenant settings to propagate
+        if: inputs.trigger_apply && inputs.propagation_wait_minutes != '0'
+        shell: pwsh
+        # Capped below the job timeout, which this sleep counts against.
+        run: |
+          $minutes = 0
+          if (-not [int]::TryParse($env:INPUT_PROPAGATION_WAIT_MINUTES, [ref]$minutes) -or $minutes -lt 0 -or $minutes -gt 30) {
+              throw 'propagation_wait_minutes must be an integer from 0 to 30.'
+          }
+          Write-Host "Waiting $minutes minutes for Fabric tenant settings to propagate."
+          Start-Sleep -Seconds ($minutes * 60)
+
       - name: Dispatch Terraform deployment
         if: inputs.trigger_apply
         shell: pwsh
@@ -347,7 +365,7 @@ jobs:
               "Permanent deployment identity: ``$env:DEPLOYMENT_CLIENT_ID``"
               "State: ``$env:INPUT_STORAGE_ACCOUNT_NAME/tfstate-gh``"
               ''
-              'Still manual: run ``scripts/Enable-FabricGitIntegration.ps1`` from a workstation as a Fabric administrator. Git integration stays disabled until you do.'
+              "Still manual: run ``scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID`` from a workstation as a Fabric administrator. Git integration and service-principal API access stay disabled until you do."
               ''
               "Remove ``BOOTSTRAP_GITHUB_TOKEN`` and revoke the bootstrap service principal's repository federation when bootstrap access is no longer needed."
           ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8

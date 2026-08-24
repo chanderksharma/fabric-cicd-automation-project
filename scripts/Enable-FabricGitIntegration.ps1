@@ -79,7 +79,7 @@ if (-not $TenantId) { $TenantId = az account show --query tenantId -o tsv }
 $accessToken = $null
 
 if ($env:CI -or $env:TF_IN_AUTOMATION) {
-    throw 'This script needs an interactive Fabric administrator and cannot run unattended. Run it from a workstation, then re-run the workflow with configure_tenant_settings disabled.'
+    throw 'This script needs an interactive Fabric administrator and cannot run unattended. Run it from a workstation, then dispatch the workflow.'
 }
 
 if (-not $accessToken) {
@@ -348,9 +348,13 @@ if ($WhatIfPreference) {
     Write-Host 'Dry run. Nothing was changed.'
 }
 elseif ($changed -eq 0) {
-    Write-Host 'Nothing to change; all required settings already have the requested scope.'
+    Write-Host 'Nothing to change; all selected settings already have the requested scope.'
 }else {
     Write-Host ''
     Write-Host "Changed $changed setting(s). Allow up to 15 minutes for propagation, then:"
     Write-Host '  ./scripts/Apply-Workspaces.ps1'
+}
+
+if (-not $IncludeServicePrincipal) {
+    Write-Warning 'Service-principal Fabric API settings were not checked. GitHub Actions requires: ./scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal'
 }

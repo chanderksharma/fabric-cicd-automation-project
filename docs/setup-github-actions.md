@@ -424,7 +424,7 @@ because Fabric stores a group's object ID rather than its name. A rebuilt group 
 a new object, so repeat steps 4 and 5 above:
 
 1. Re-add yourself and your colleagues to the recreated groups with `./scripts/Add-MeToFabricGroups.ps1`.
-2. Re-run `Enable-FabricGitIntegration.ps1`, which drops the dead group references and rewrites the current ones.
+2. Re-run `Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal`, which drops the dead group references and rewrites the current ones.
 
 Skipping either leaves Terraform failing with `Unauthorized` when the Fabric
 provider lists connections, because the tenant settings still point at a group

@@ -487,7 +487,7 @@ A different one builds a second estate beside the first rather than replacing it
 | `MissingItemDefinitionFiles` | An item folder lacks a valid definition. A `.platform` file alone is not enough for Lakehouse, Report or SemanticModel |
 | `unexpected connectivity type` | The `fabric_connections` data source cannot parse a tenant connection. Supply `TF_VAR_github_connection_id` instead |
 | `InsufficientScopes` on admin API | The Azure CLI token lacks Fabric admin scopes. Use `Enable-FabricGitIntegration.ps1`, which signs in through its own app |
-| `Unauthorized` listing connections during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run `Enable-FabricGitIntegration.ps1`, which drops the stale references |
+| `Unauthorized` listing connections during plan | The service principal tenant settings point at a security group that was deleted and rebuilt. Re-run `Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal`, which drops the stale references |
 | `Insufficient privileges to complete the operation` from `az` | Your directory role is inactive or read-only. Activate it in Privileged Identity Management; Global Reader cannot write |
 | Workspaces exist but you cannot see them | You are not in one of the three security groups. Run `./scripts/Add-MeToFabricGroups.ps1`, then allow a few minutes for Fabric to notice. See [Step 6](#step-6-assign-users-to-the-fabric-workspaces) |
 | Git integration missing on prod only | Expected. Platform admins hold Viewer on prod and the source-control panel is admin-only. Check through the admin portal or the REST API |
