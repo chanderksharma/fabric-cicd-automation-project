@@ -281,7 +281,7 @@ The tenant-settings APIs accept a signed-in Fabric administrator through a deleg
 
 They also accept a service principal, so the step can be automated. That requires a Fabric administrator to enable **Service principals can access read-only admin APIs** and **Service principals can access admin APIs used for updates** for the bootstrap identity, and the bootstrap app registration must carry no admin-consent-required Fabric permissions, which silently blocks service principal authentication. Scope those two settings to the whole organisation or to a group that is never deleted; scoping them to `sg-fabric-platform-admins` means deleting that group locks the automation out of the API it needs to repair itself.
 
-With that in place, run `bootstrap.yml` with `configure_tenant_settings` enabled and the workflow re-points the settings at the current groups itself. Both APIs are in preview, so the script keeps the device-code path as a fallback.
+With that in place, `Enable-FabricGitIntegration.ps1 -Auth ServicePrincipal` runs unattended, so the step can be automated from a pipeline of your own. The workflows do not attempt it: without the grant it only fails, and with the groups left out of teardown there is nothing to re-point. Both APIs are in preview, so the script keeps the device-code path as its default.
 
 ### Azure RBAC for the deployment identity
 
@@ -345,11 +345,6 @@ so the items in them are lost. Pick it before step 6, not after.
 
 The workflow is idempotent: re-running it adopts existing state, groups,
 applications, repositories, branches, environments and variables.
-
-One input is off for a first build. `configure_tenant_settings` re-points the
-Fabric tenant settings at the current groups, which works only once the admin-API
-access described under
-[Fabric administrator authorization](#fabric-administrator-authorization) exists.
 
 Nothing waits for propagation here. After a rebuild the deployment principal is
 new, and Fabric has to notice its membership of the admin group before the tenant

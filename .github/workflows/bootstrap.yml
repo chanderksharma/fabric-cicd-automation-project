@@ -47,11 +47,6 @@ on:
         required: true
         default: false
         type: boolean
-      configure_tenant_settings:
-        description: Re-point the Fabric tenant settings at the current groups. Requires the admin-API tenant settings to be enabled for the bootstrap identity
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   id-token: write
@@ -336,19 +331,6 @@ jobs:
               }
           }
 
-      - name: Re-point Fabric tenant settings
-        if: inputs.configure_tenant_settings
-        shell: pwsh
-        # Optional and last, so a missing admin-API grant cannot strand a
-        # bootstrap that has already published its variables.
-        continue-on-error: true
-        run: |
-          ./scripts/Enable-FabricGitIntegration.ps1 `
-              -Auth ServicePrincipal `
-              -IncludeServicePrincipal `
-              -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID
-          "FABRIC_TENANT_SETTINGS_CONFIGURED=true" >> $env:GITHUB_ENV
-
       - name: Dispatch Terraform deployment
         if: inputs.trigger_apply
         shell: pwsh
@@ -360,10 +342,7 @@ jobs:
         shell: pwsh
         run: |
           $command = "scripts/Enable-FabricGitIntegration.ps1 -IncludeServicePrincipal -PrincipalObjectId $env:DEPLOYMENT_OBJECT_ID"
-          $tenantNote = if ($env:FABRIC_TENANT_SETTINGS_CONFIGURED -eq 'true') {
-              'Fabric tenant settings were re-pointed at the current security groups by this run. Nothing further is needed.'
-          }
-          elseif ($env:FABRIC_GROUPS_CREATED -eq 'true') {
+          $tenantNote = if ($env:FABRIC_GROUPS_CREATED -eq 'true') {
               "REQUIRED: the security groups were recreated, so the Fabric tenant settings still name groups that no longer exist and every apply will fail with ``Unauthorized``. Run ``$command`` from a workstation as a Fabric administrator, then re-run ``scripts/Add-MeToFabricGroups.ps1``."
           }
           else {
