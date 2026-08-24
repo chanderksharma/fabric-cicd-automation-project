@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Grants or revokes the deployment identity's Azure roles around a single run.

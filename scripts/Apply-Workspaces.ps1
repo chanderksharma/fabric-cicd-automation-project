@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Applies the workspace Terraform root across dev, test and prod.

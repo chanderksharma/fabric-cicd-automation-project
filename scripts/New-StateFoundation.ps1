@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     One-time creation of the Terraform state foundation: storage account,

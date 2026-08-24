@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Grants this machine's public IP inbound access to a network security perimeter.

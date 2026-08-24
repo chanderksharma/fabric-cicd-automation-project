@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Enables the Fabric tenant settings required for GitHub Git integration.
