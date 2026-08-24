@@ -299,6 +299,23 @@ if ($OrphansOnly) {
     Remove-DeploymentPipelines
 }
 else {
+    # A destroy plan still reads every data source whose inputs are static, so an
+    # already-deleted Entra group aborts it before anything is removed. Supplying
+    # IDs switches those lookups off; the values are never used, because destroy
+    # works from state. TF_VAR_ is deliberate: unlike -var, a root that does not
+    # declare the variable ignores it instead of failing.
+    $placeholderGuid = '00000000-0000-0000-0000-000000000000'
+    if (-not $env:TF_VAR_platform_admin_group_object_id) {
+        $env:TF_VAR_platform_admin_group_object_id = $placeholderGuid
+    }
+    if (-not $env:TF_VAR_group_object_ids) {
+        $env:TF_VAR_group_object_ids = @{
+            platform_admins = $placeholderGuid
+            data_engineers  = $placeholderGuid
+            analysts        = $placeholderGuid
+        } | ConvertTo-Json -Compress
+    }
+
     Write-Step 'Deleting deployment pipelines (they block workspace deletion)'
     Remove-DeploymentPipelines
 
@@ -326,6 +343,8 @@ else {
     }
 
     Write-Step "Destroying Fabric workspaces ($($Environments -join ', '))"
+    # An empty capacity key drops the fabric_capacity lookup, which fails on read
+    # and aborts the destroy once the capacity itself is gone.
     foreach ($environment in $Environments) {
         Write-Host "--- $environment" -ForegroundColor DarkGray
         Invoke-TerraformDestroy `
@@ -333,6 +352,7 @@ else {
             -BackendConfig "envs/$environment.backend.hcl" `
             -StateKey "workspace-$environment.tfstate" `
             -VarFile "envs/$environment.tfvars" `
+            -VarOverrides @('capacity_key=') `
             -Label "$NamePrefix-$environment" | Out-Null
     }
 
